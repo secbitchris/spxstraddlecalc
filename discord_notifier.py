@@ -3,8 +3,7 @@ import logging
 import os
 from datetime import datetime
 from typing import Dict, Any, Optional
-import discord
-from discord.ext import commands
+import aiohttp
 import pytz
 from dotenv import load_dotenv
 
@@ -15,85 +14,58 @@ logger = logging.getLogger(__name__)
 
 class DiscordNotifier:
     """
-    Discord notification service for SPX straddle calculations
+    Discord webhook notification service for SPX straddle calculations
     
-    Sends formatted messages to Discord channels with straddle cost data,
-    statistics, and analysis results.
+    Sends formatted messages to Discord channels using webhooks.
+    Much simpler than bot tokens - just needs a webhook URL.
     """
     
-    def __init__(self, bot_token: str = None, channel_id: str = None):
+    def __init__(self, webhook_url: str = None):
         """
-        Initialize Discord notifier
+        Initialize Discord webhook notifier
         
         Args:
-            bot_token: Discord bot token (defaults to env var)
-            channel_id: Discord channel ID (defaults to env var)
+            webhook_url: Discord webhook URL (defaults to env var)
         """
-        self.bot_token = bot_token or os.getenv("DISCORD_BOT_TOKEN")
-        self.channel_id = int(channel_id or os.getenv("DISCORD_CHANNEL_ID", "0"))
+        self.webhook_url = webhook_url or os.getenv("DISCORD_WEBHOOK_URL")
         self.enabled = os.getenv("DISCORD_ENABLED", "false").lower() == "true"
         
-        # Discord client setup
-        intents = discord.Intents.default()
-        intents.message_content = True
-        self.client = discord.Client(intents=intents)
-        self.channel = None
-        self.connected = False
-        
-        if not self.bot_token or not self.channel_id:
-            logger.warning("Discord bot token or channel ID not configured")
+        if not self.webhook_url:
+            logger.warning("Discord webhook URL not configured")
             self.enabled = False
+        
+        if self.enabled:
+            logger.info("Discord webhook notifications enabled")
     
     async def initialize(self):
-        """Initialize Discord connection"""
-        if not self.enabled:
+        """Initialize webhook (no setup needed for webhooks)"""
+        if self.enabled:
+            logger.info("Discord webhook notifier initialized")
+        else:
             logger.info("Discord notifications disabled")
-            return
-        
-        try:
-            await self.client.login(self.bot_token)
-            logger.info("Discord client logged in successfully")
-            
-            # Get the channel
-            self.channel = self.client.get_channel(self.channel_id)
-            if not self.channel:
-                logger.error(f"Could not find Discord channel with ID: {self.channel_id}")
-                self.enabled = False
-                return
-            
-            self.connected = True
-            logger.info(f"Discord notifier initialized for channel: {self.channel.name}")
-            
-        except Exception as e:
-            logger.error(f"Failed to initialize Discord client: {e}")
-            self.enabled = False
     
     async def close(self):
-        """Close Discord connection"""
-        if self.client and not self.client.is_closed():
-            await self.client.close()
-            logger.info("Discord client closed")
+        """Close webhook (no cleanup needed for webhooks)"""
+        pass
     
-    def format_straddle_message(self, result: Dict[str, Any]) -> str:
+    def format_straddle_message(self, result: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Format straddle calculation result into Discord message
+        Format straddle calculation result into Discord webhook payload
         
         Args:
             result: Straddle calculation result
             
         Returns:
-            Formatted Discord message string
+            Discord webhook payload dict
         """
         try:
             et_tz = pytz.timezone('US/Eastern')
             timestamp = datetime.now(et_tz).strftime('%Y-%m-%d %H:%M:%S ET')
             
             if 'error' in result:
-                return f"""🚨 **SPX Straddle Calculation Error**
-```
-Error: {result['error']}
-Time: {timestamp}
-```"""
+                return {
+                    "content": f"🚨 **SPX Straddle Calculation Error**\n```\nError: {result['error']}\nTime: {timestamp}\n```"
+                }
             
             # Success message
             straddle_cost = result.get('straddle_cost', 0)
@@ -104,7 +76,7 @@ Time: {timestamp}
             calc_date = result.get('calculation_date', 'Unknown')
             
             # Create formatted message with emojis and styling
-            message = f"""📊 **SPX 0DTE Straddle Cost - {calc_date}**
+            content = f"""📊 **SPX 0DTE Straddle Cost - {calc_date}**
 
 💰 **Total Straddle Cost: ${straddle_cost:.2f}**
 
@@ -122,31 +94,31 @@ Time: {timestamp}
             # Add cost analysis
             if straddle_cost > 0:
                 if straddle_cost < 30:
-                    message += "\n💡 **Analysis:** Low cost straddle - potential opportunity"
+                    content += "\n💡 **Analysis:** Low cost straddle - potential opportunity"
                 elif straddle_cost > 60:
-                    message += "\n⚠️ **Analysis:** High cost straddle - elevated volatility expected"
+                    content += "\n⚠️ **Analysis:** High cost straddle - elevated volatility expected"
                 else:
-                    message += "\n📊 **Analysis:** Moderate cost straddle"
+                    content += "\n📊 **Analysis:** Moderate cost straddle"
             
-            return message
+            return {"content": content}
             
         except Exception as e:
             logger.error(f"Error formatting straddle message: {e}")
-            return f"❌ Error formatting straddle data: {str(e)}"
+            return {"content": f"❌ Error formatting straddle data: {str(e)}"}
     
-    def format_statistics_message(self, stats: Dict[str, Any]) -> str:
+    def format_statistics_message(self, stats: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Format statistics into Discord message
+        Format statistics into Discord webhook payload
         
         Args:
             stats: Statistics calculation result
             
         Returns:
-            Formatted Discord message string
+            Discord webhook payload dict
         """
         try:
             if stats.get('status') != 'success':
-                return f"❌ **Statistics Error:** {stats.get('error_message', 'Unknown error')}"
+                return {"content": f"❌ **Statistics Error:** {stats.get('error_message', 'Unknown error')}"}
             
             desc_stats = stats.get('descriptive_stats', {})
             trend = stats.get('trend_analysis', {})
@@ -154,7 +126,7 @@ Time: {timestamp}
             recent = stats.get('recent_comparison', {})
             period = stats.get('period_days', 30)
             
-            message = f"""📈 **SPX Straddle Statistics ({period} days)**
+            content = f"""📈 **SPX Straddle Statistics ({period} days)**
 
 📊 **Descriptive Stats:**
 • Average: ${desc_stats.get('mean', 0):.2f}
@@ -175,35 +147,65 @@ Time: {timestamp}
 • Change: {recent.get('percentage_change', 0):+.1f}%
 """
             
-            return message
+            return {"content": content}
             
         except Exception as e:
             logger.error(f"Error formatting statistics message: {e}")
-            return f"❌ Error formatting statistics: {str(e)}"
+            return {"content": f"❌ Error formatting statistics: {str(e)}"}
     
-    def format_error_message(self, error: str, context: str = "SPX Straddle") -> str:
+    def format_error_message(self, error: str, context: str = "SPX Straddle") -> Dict[str, Any]:
         """
-        Format error message for Discord
+        Format error message for Discord webhook
         
         Args:
             error: Error message
             context: Context of the error
             
         Returns:
-            Formatted error message
+            Discord webhook payload dict
         """
         et_tz = pytz.timezone('US/Eastern')
         timestamp = datetime.now(et_tz).strftime('%Y-%m-%d %H:%M:%S ET')
         
-        return f"""🚨 **{context} Error**
+        return {
+            "content": f"""🚨 **{context} Error**
 ```
 {error}
 ```
 ⏰ **Time:** {timestamp}"""
+        }
+    
+    async def send_webhook(self, payload: Dict[str, Any]) -> bool:
+        """
+        Send payload to Discord webhook
+        
+        Args:
+            payload: Discord webhook payload
+            
+        Returns:
+            True if sent successfully, False otherwise
+        """
+        if not self.enabled or not self.webhook_url:
+            logger.warning("Discord webhook not enabled or not configured")
+            return False
+        
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(self.webhook_url, json=payload) as response:
+                    if response.status == 204:  # Discord webhook success status
+                        logger.info("Message sent to Discord webhook successfully")
+                        return True
+                    else:
+                        logger.error(f"Discord webhook returned status {response.status}: {await response.text()}")
+                        return False
+            
+        except Exception as e:
+            logger.error(f"Failed to send Discord webhook: {e}")
+            return False
     
     async def send_message(self, message: str) -> bool:
         """
-        Send message to Discord channel
+        Send simple text message to Discord webhook
         
         Args:
             message: Message to send
@@ -211,29 +213,25 @@ Time: {timestamp}
         Returns:
             True if sent successfully, False otherwise
         """
-        if not self.enabled or not self.connected or not self.channel:
-            logger.warning("Discord not enabled or not connected")
+        if not self.enabled:
             return False
         
-        try:
-            # Split long messages if needed (Discord has 2000 char limit)
-            if len(message) > 2000:
-                chunks = [message[i:i+1900] for i in range(0, len(message), 1900)]
-                for chunk in chunks:
-                    await self.channel.send(chunk)
-            else:
-                await self.channel.send(message)
-            
-            logger.info("Message sent to Discord successfully")
-            return True
-            
-        except Exception as e:
-            logger.error(f"Failed to send Discord message: {e}")
-            return False
+        # Split long messages if needed (Discord has 2000 char limit)
+        if len(message) > 2000:
+            chunks = [message[i:i+1900] for i in range(0, len(message), 1900)]
+            success = True
+            for chunk in chunks:
+                chunk_success = await self.send_webhook({"content": chunk})
+                success = success and chunk_success
+                if len(chunks) > 1:
+                    await asyncio.sleep(1)  # Rate limit protection
+            return success
+        else:
+            return await self.send_webhook({"content": message})
     
     async def notify_straddle_result(self, result: Dict[str, Any]) -> bool:
         """
-        Send straddle calculation result to Discord
+        Send straddle calculation result to Discord webhook
         
         Args:
             result: Straddle calculation result
@@ -244,12 +242,12 @@ Time: {timestamp}
         if not self.enabled:
             return False
         
-        message = self.format_straddle_message(result)
-        return await self.send_message(message)
+        payload = self.format_straddle_message(result)
+        return await self.send_webhook(payload)
     
     async def notify_statistics(self, stats: Dict[str, Any]) -> bool:
         """
-        Send statistics to Discord
+        Send statistics to Discord webhook
         
         Args:
             stats: Statistics data
@@ -260,12 +258,12 @@ Time: {timestamp}
         if not self.enabled:
             return False
         
-        message = self.format_statistics_message(stats)
-        return await self.send_message(message)
+        payload = self.format_statistics_message(stats)
+        return await self.send_webhook(payload)
     
     async def notify_error(self, error: str, context: str = "SPX Straddle") -> bool:
         """
-        Send error notification to Discord
+        Send error notification to Discord webhook
         
         Args:
             error: Error message
@@ -277,8 +275,8 @@ Time: {timestamp}
         if not self.enabled:
             return False
         
-        message = self.format_error_message(error, context)
-        return await self.send_message(message)
+        payload = self.format_error_message(error, context)
+        return await self.send_webhook(payload)
     
     async def notify_daily_summary(self, straddle_result: Dict[str, Any], stats: Dict[str, Any] = None) -> bool:
         """
@@ -310,15 +308,14 @@ Time: {timestamp}
             return False
     
     def is_enabled(self) -> bool:
-        """Check if Discord notifications are enabled and connected"""
-        return self.enabled and self.connected
+        """Check if Discord webhook notifications are enabled"""
+        return self.enabled and bool(self.webhook_url)
     
     def get_status(self) -> Dict[str, Any]:
-        """Get Discord notifier status"""
+        """Get Discord webhook notifier status"""
         return {
             'enabled': self.enabled,
-            'connected': self.connected,
-            'channel_id': self.channel_id,
-            'channel_name': self.channel.name if self.channel else None,
-            'bot_configured': bool(self.bot_token)
+            'webhook_configured': bool(self.webhook_url),
+            'webhook_url_set': bool(self.webhook_url),
+            'type': 'webhook'
         } 

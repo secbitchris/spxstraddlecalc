@@ -1,6 +1,6 @@
 # SPX 0DTE Straddle Calculator
 
-A comprehensive Python application for calculating and tracking SPX (S&P 500 Index) 0DTE (zero days to expiration) straddle costs using Polygon.io market data, with Discord notifications and automated scheduling.
+A comprehensive Python application for calculating and tracking SPX (S&P 500 Index) 0DTE (zero days to expiration) straddle costs using Polygon.io market data, with Discord webhook notifications and automated scheduling.
 
 ## 🚀 Features
 
@@ -9,7 +9,7 @@ A comprehensive Python application for calculating and tracking SPX (S&P 500 Ind
 - **Straddle Calculation**: Automatically calculates ATM (at-the-money) straddle costs
 - **Historical Analysis**: Stores and analyzes historical straddle cost data
 - **Statistical Insights**: Provides trend analysis, volatility metrics, and pattern recognition
-- **Discord Integration**: Sends automated notifications to Discord channels
+- **Discord Webhooks**: Sends automated notifications to Discord channels via webhooks
 - **REST API**: Full-featured API with web dashboard
 - **Automated Scheduling**: Daily calculations and weekly data cleanup
 - **Docker Support**: Complete containerized deployment
@@ -20,7 +20,7 @@ A comprehensive Python application for calculating and tracking SPX (S&P 500 Ind
 - Python 3.11+
 - [Polygon.io API key](https://polygon.io/) (free tier supported)
 - Redis server (or use Docker Compose)
-- Discord bot token (optional, for notifications)
+- Discord webhook URL (optional, for notifications)
 
 ## 🛠️ Quick Start
 
@@ -36,8 +36,7 @@ A comprehensive Python application for calculating and tracking SPX (S&P 500 Ind
 2. **Configure environment variables** in `.env`:
    ```bash
    POLYGON_API_KEY=your_polygon_api_key_here
-   DISCORD_BOT_TOKEN=your_discord_bot_token_here  # Optional
-   DISCORD_CHANNEL_ID=your_discord_channel_id_here  # Optional
+   DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/YOUR_WEBHOOK_ID/YOUR_WEBHOOK_TOKEN  # Optional
    DISCORD_ENABLED=true  # Set to false to disable Discord
    ```
 
@@ -109,13 +108,13 @@ async def calculate_straddle():
 asyncio.run(calculate_straddle())
 ```
 
-### Discord Notifications
+### Discord Webhook Notifications
 
 ```python
 from discord_notifier import DiscordNotifier
 
 async def send_notification():
-    notifier = DiscordNotifier()
+    notifier = DiscordNotifier("https://discord.com/api/webhooks/YOUR_WEBHOOK_ID/YOUR_WEBHOOK_TOKEN")
     await notifier.initialize()
     
     if notifier.is_enabled():
@@ -177,8 +176,7 @@ KEEP_DAYS=90           # Days of data to retain
 |----------|-------------|---------|----------|
 | `POLYGON_API_KEY` | Polygon.io API key | - | ✅ |
 | `REDIS_URL` | Redis connection URL | `redis://localhost:6379` | ❌ |
-| `DISCORD_BOT_TOKEN` | Discord bot token | - | ❌ |
-| `DISCORD_CHANNEL_ID` | Discord channel ID | - | ❌ |
+| `DISCORD_WEBHOOK_URL` | Discord webhook URL | - | ❌ |
 | `DISCORD_ENABLED` | Enable Discord notifications | `false` | ❌ |
 | `LOG_LEVEL` | Logging level | `INFO` | ❌ |
 | `CALCULATION_TIME` | Daily calculation time (ET) | `09:32` | ❌ |
@@ -187,18 +185,20 @@ KEEP_DAYS=90           # Days of data to retain
 
 ### Discord Setup
 
-1. **Create a Discord Bot**:
-   - Go to [Discord Developer Portal](https://discord.com/developers/applications)
-   - Create a new application and bot
-   - Copy the bot token
+1. **Create a Discord Webhook**:
+   - Go to your Discord server
+   - Right-click on the channel where you want notifications
+   - Select "Edit Channel" → "Integrations" → "Webhooks"
+   - Click "New Webhook"
+   - Copy the webhook URL
 
-2. **Get Channel ID**:
-   - Enable Developer Mode in Discord
-   - Right-click your channel → Copy ID
+2. **Configure the Application**:
+   ```bash
+   DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/YOUR_WEBHOOK_ID/YOUR_WEBHOOK_TOKEN
+   DISCORD_ENABLED=true
+   ```
 
-3. **Invite Bot**:
-   - Generate invite URL with "Send Messages" permission
-   - Add bot to your server
+That's it! Much simpler than bot tokens - no need to create applications or manage permissions.
 
 ## 📈 Data Analysis
 

@@ -129,24 +129,26 @@ async def main():
         
         # Example 5: Test Discord functionality
         if discord_notifier.is_enabled():
-            print("\n🧪 EXAMPLE 5: Testing Discord Integration")
+            print("\n🧪 EXAMPLE 5: Testing Discord Webhook Integration")
             print("-" * 50)
             
-            test_message = "🧪 **Test Message from SPX Straddle Calculator**\n\nThis is a test to verify Discord integration is working correctly!"
+            test_message = "🧪 **Test Message from SPX Straddle Calculator**\n\nThis is a test to verify Discord webhook integration is working correctly!"
             discord_success = await discord_notifier.send_message(test_message)
             if discord_success:
-                print("✅ Discord test message sent successfully")
+                print("✅ Discord webhook test message sent successfully")
             else:
-                print("❌ Failed to send Discord test message")
+                print("❌ Failed to send Discord webhook test message")
         else:
-            print("\n🔇 EXAMPLE 5: Discord Integration")
+            print("\n🔇 EXAMPLE 5: Discord Webhook Integration")
             print("-" * 50)
-            print("Discord notifications are disabled or not configured")
-            print("To enable Discord:")
-            print("1. Create a Discord bot and get the token")
-            print("2. Get your Discord channel ID")
-            print("3. Set DISCORD_BOT_TOKEN and DISCORD_CHANNEL_ID environment variables")
-            print("4. Set DISCORD_ENABLED=true")
+            print("Discord webhook notifications are disabled or not configured")
+            print("To enable Discord webhooks:")
+            print("1. Go to your Discord server")
+            print("2. Right-click the channel → Edit Channel → Integrations → Webhooks")
+            print("3. Create a new webhook and copy the URL")
+            print("4. Set DISCORD_WEBHOOK_URL environment variable")
+            print("5. Set DISCORD_ENABLED=true")
+            print("6. Much simpler than bot tokens - no permissions needed!")
         
         # Example 6: System status
         print("\n🔍 EXAMPLE 6: System Status")
@@ -157,9 +159,9 @@ async def main():
         print(f"Discord enabled: {'✅' if discord_notifier.is_enabled() else '❌'}")
         if discord_notifier.is_enabled():
             discord_status = discord_notifier.get_status()
-            print(f"Discord connected: {'✅' if discord_status['connected'] else '❌'}")
-            if discord_status['connected']:
-                print(f"Discord channel: #{discord_status['channel_name']}")
+            print(f"Discord webhook configured: {'✅' if discord_status['webhook_configured'] else '❌'}")
+            if discord_status['webhook_configured']:
+                print(f"Discord type: {discord_status['type']}")
         
         # Example 7: Clean up old data (demonstration)
         print("\n🧹 EXAMPLE 7: Data Cleanup (keeping 90 days)")

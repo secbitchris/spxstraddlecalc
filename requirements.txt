@@ -9,8 +9,7 @@ python-dotenv==1.0.0
 fastapi==0.104.1
 uvicorn[standard]==0.24.0
 
-# Discord integration
-discord.py==2.3.2
+# HTTP client for Discord webhooks
 aiohttp==3.9.1
 
 # Scheduling

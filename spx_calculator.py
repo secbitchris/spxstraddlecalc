@@ -6,7 +6,6 @@ import pytz
 from datetime import datetime, timedelta, date
 from typing import Dict, Any, Optional, List
 import redis
-import aioredis
 from polygon import RESTClient
 import os
 from dotenv import load_dotenv
@@ -59,7 +58,19 @@ class SPXStraddleCalculator:
     async def initialize(self):
         """Initialize Redis connection"""
         try:
-            self.redis = await aioredis.from_url(self.redis_url)
+            # Parse Redis URL for connection
+            if self.redis_url.startswith('redis://'):
+                # Extract host and port from URL
+                url_parts = self.redis_url.replace('redis://', '').split(':')
+                host = url_parts[0] if url_parts[0] else 'localhost'
+                port = int(url_parts[1]) if len(url_parts) > 1 else 6379
+            else:
+                host = 'localhost'
+                port = 6379
+            
+            self.redis = redis.Redis(host=host, port=port, decode_responses=True)
+            # Test connection
+            self.redis.ping()
             logger.info("Redis connection established")
         except Exception as e:
             logger.error(f"Failed to connect to Redis: {e}")
@@ -68,7 +79,7 @@ class SPXStraddleCalculator:
     async def close(self):
         """Close Redis connection"""
         if self.redis:
-            await self.redis.close()
+            self.redis.close()
     
     async def get_spx_price_at_930am(self, target_date: date = None) -> Optional[float]:
         """
@@ -357,11 +368,11 @@ class SPXStraddleCalculator:
             
             # Store with date-based key
             redis_key = f'spx_straddle_cost_{target_date.strftime("%Y%m%d")}'
-            await self.redis.set(redis_key, json.dumps(storage_data))
+            self.redis.set(redis_key, json.dumps(storage_data))
             
             # Add to chronological index
             date_ordinal = target_date.toordinal()
-            await self.redis.zadd('spx_straddle_chronological', {redis_key: date_ordinal})
+            self.redis.zadd('spx_straddle_chronological', {redis_key: date_ordinal})
             
             logger.info(f"[SPX_STRADDLE] Stored straddle data for {target_date}")
             
@@ -393,10 +404,8 @@ class SPXStraddleCalculator:
             if self.redis:
                 try:
                     redis_key = f'spx_straddle_cost_{target_date.strftime("%Y%m%d")}'
-                    cached_data = await self.redis.get(redis_key)
+                    cached_data = self.redis.get(redis_key)
                     if cached_data:
-                        if isinstance(cached_data, bytes):
-                            cached_data = cached_data.decode('utf-8')
                         loaded_data = json.loads(cached_data)
                         if loaded_data.get('calculation_status') == 'available':
                             logger.info("[SPX_STRADDLE] Loaded straddle data from Redis")
@@ -450,7 +459,7 @@ class SPXStraddleCalculator:
             end_ordinal = end_date.toordinal()
             
             # Get keys in date range
-            historical_keys = await self.redis.zrangebyscore(
+            historical_keys = self.redis.zrangebyscore(
                 'spx_straddle_chronological', 
                 start_ordinal, 
                 end_ordinal
@@ -460,13 +469,8 @@ class SPXStraddleCalculator:
             
             # Fetch data for each key
             for key in historical_keys:
-                if isinstance(key, bytes):
-                    key = key.decode('utf-8')
-                
-                data_json = await self.redis.get(key)
+                data_json = self.redis.get(key)
                 if data_json:
-                    if isinstance(data_json, bytes):
-                        data_json = data_json.decode('utf-8')
                     record = json.loads(data_json)
                     historical_data.append(record)
             
@@ -647,7 +651,7 @@ class SPXStraddleCalculator:
             cutoff_ordinal = cutoff_date.toordinal()
             
             # Get old keys
-            old_keys = await self.redis.zrangebyscore(
+            old_keys = self.redis.zrangebyscore(
                 'spx_straddle_chronological',
                 0,
                 cutoff_ordinal
@@ -656,12 +660,10 @@ class SPXStraddleCalculator:
             if old_keys:
                 # Remove old data
                 for key in old_keys:
-                    if isinstance(key, bytes):
-                        key = key.decode('utf-8')
-                    await self.redis.delete(key)
+                    self.redis.delete(key)
                 
                 # Remove from chronological index
-                await self.redis.zremrangebyscore(
+                self.redis.zremrangebyscore(
                     'spx_straddle_chronological',
                     0,
                     cutoff_ordinal
