@@ -41,8 +41,8 @@ newgrp docker
 ### 📥 Step 2: Clone Repository
 
 ```bash
-# Clone the repository
-git clone https://github.com/yourusername/spxstraddle.git
+# Clone the repository (replace with your actual repository URL)
+git clone https://github.com/yourusername/spx-straddle-calculator.git spxstraddle
 cd spxstraddle
 
 # Verify files are present
