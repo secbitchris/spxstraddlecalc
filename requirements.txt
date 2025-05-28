@@ -1,0 +1,29 @@
+# Core dependencies
+polygon-api-client==1.12.3
+aioredis==2.0.1
+redis==4.5.4
+pytz==2023.3
+python-dotenv==1.0.0
+
+# API server dependencies
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+
+# Discord integration
+discord.py==2.3.2
+aiohttp==3.9.1
+
+# Scheduling
+schedule==1.2.0
+APScheduler==3.10.4
+
+# Data processing
+pandas==2.1.4
+numpy==1.24.3
+
+# Logging and monitoring
+structlog==23.1.0
+
+# Testing (optional)
+pytest==7.4.3
+pytest-asyncio==0.21.1 

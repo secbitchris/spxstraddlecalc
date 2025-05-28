@@ -1,0 +1,98 @@
+version: '3.8'
+
+services:
+  # Redis for data storage
+  redis:
+    image: redis:7-alpine
+    container_name: spx-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+      - ./redis.conf:/usr/local/etc/redis/redis.conf:ro
+    command: redis-server /usr/local/etc/redis/redis.conf
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # SPX Straddle API Server
+  spx-api:
+    build: .
+    container_name: spx-api
+    ports:
+      - "8000:8000"
+    environment:
+      - POLYGON_API_KEY=${POLYGON_API_KEY}
+      - REDIS_URL=redis://redis:6379
+      - DISCORD_BOT_TOKEN=${DISCORD_BOT_TOKEN}
+      - DISCORD_CHANNEL_ID=${DISCORD_CHANNEL_ID}
+      - DISCORD_ENABLED=${DISCORD_ENABLED:-false}
+      - API_HOST=0.0.0.0
+      - API_PORT=8000
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    depends_on:
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./logs:/app/logs
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # SPX Straddle Scheduler (optional)
+  spx-scheduler:
+    build: .
+    container_name: spx-scheduler
+    environment:
+      - POLYGON_API_KEY=${POLYGON_API_KEY}
+      - REDIS_URL=redis://redis:6379
+      - DISCORD_BOT_TOKEN=${DISCORD_BOT_TOKEN}
+      - DISCORD_CHANNEL_ID=${DISCORD_CHANNEL_ID}
+      - DISCORD_ENABLED=${DISCORD_ENABLED:-false}
+      - ENABLE_SCHEDULER=${ENABLE_SCHEDULER:-true}
+      - CALCULATION_TIME=${CALCULATION_TIME:-09:32}
+      - CLEANUP_DAY=${CLEANUP_DAY:-sunday}
+      - CLEANUP_TIME=${CLEANUP_TIME:-02:00}
+      - KEEP_DAYS=${KEEP_DAYS:-90}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    depends_on:
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./logs:/app/logs
+    command: ["python", "scheduler.py"]
+    restart: unless-stopped
+    profiles:
+      - scheduler
+
+  # Example usage runner (for testing)
+  spx-example:
+    build: .
+    container_name: spx-example
+    environment:
+      - POLYGON_API_KEY=${POLYGON_API_KEY}
+      - REDIS_URL=redis://redis:6379
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    depends_on:
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./logs:/app/logs
+    command: ["python", "example_usage.py"]
+    restart: "no"
+    profiles:
+      - example
+
+volumes:
+  redis_data:
+    driver: local
+
+networks:
+  default:
+    name: spx-network 
