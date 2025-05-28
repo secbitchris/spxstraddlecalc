@@ -24,6 +24,7 @@ services:
     container_name: spx-api
     ports:
       - "8000:8000"
+      - "9090:9090"  # Prometheus metrics port
     environment:
       - POLYGON_API_KEY=${POLYGON_API_KEY}
       - REDIS_URL=redis://redis:6379
@@ -32,6 +33,12 @@ services:
       - API_HOST=0.0.0.0
       - API_PORT=8000
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - LOG_FILE=logs/spx_calculator.log
+      - LOKI_ENABLED=${LOKI_ENABLED:-false}
+      - LOKI_URL=${LOKI_URL}
+      - ENVIRONMENT=${ENVIRONMENT:-production}
+      - PROMETHEUS_METRICS_ENABLED=${PROMETHEUS_METRICS_ENABLED:-false}
+      - PROMETHEUS_METRICS_PORT=9090
     depends_on:
       redis:
         condition: service_healthy
@@ -59,6 +66,12 @@ services:
       - CLEANUP_TIME=${CLEANUP_TIME:-02:00}
       - KEEP_DAYS=${KEEP_DAYS:-90}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - LOG_FILE=logs/spx_calculator.log
+      - LOKI_ENABLED=${LOKI_ENABLED:-false}
+      - LOKI_URL=${LOKI_URL}
+      - ENVIRONMENT=${ENVIRONMENT:-production}
+      - PROMETHEUS_METRICS_ENABLED=${PROMETHEUS_METRICS_ENABLED:-false}
+      - PROMETHEUS_METRICS_PORT=9091
     depends_on:
       redis:
         condition: service_healthy
