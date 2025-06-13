@@ -112,14 +112,24 @@ class SPXStraddleCalculator:
                 limit=50000
             )
             
-            if not aggs or not hasattr(aggs, 'results') or not aggs.results:
+            # Handle both list response and object with results attribute
+            if not aggs:
+                logger.warning("[SPX_STRADDLE] No SPX data received from Polygon")
+                return None
+            
+            # Check if aggs is a list (new format) or has results attribute (old format)
+            if isinstance(aggs, list):
+                bars = aggs
+            elif hasattr(aggs, 'results') and aggs.results:
+                bars = aggs.results
+            else:
                 logger.warning("[SPX_STRADDLE] No SPX data received from Polygon")
                 return None
             
             # Find the 9:30 AM candle
             target_timestamp = int(target_datetime.timestamp() * 1000)  # Polygon uses milliseconds
             
-            for bar in aggs.results:
+            for bar in bars:
                 # Polygon timestamps are in milliseconds
                 bar_time = datetime.fromtimestamp(bar.timestamp / 1000, tz=et_tz)
                 if bar_time.hour == 9 and bar_time.minute == 30:
@@ -194,10 +204,10 @@ class SPXStraddleCalculator:
                 target_date = datetime.now(et_tz).date()
             
             # Build option ticker for Polygon
-            # SPX options format: O:SPX{YYMMDD}{C/P}{strike*1000}
+            # SPX 0DTE options use SPXW format: O:SPXW{YYMMDD}{C/P}{strike*1000}
             expiry_short = expiry[2:]  # Convert YYYYMMDD to YYMMDD
             strike_formatted = f"{int(strike * 1000):08d}"  # Strike in thousandths, 8 digits
-            option_ticker = f"O:SPX{expiry_short}{right}{strike_formatted}"
+            option_ticker = f"O:SPXW{expiry_short}{right}{strike_formatted}"
             
             logger.info(f"[SPX_STRADDLE] Fetching option price for {option_ticker} at 9:31 AM ET")
             
@@ -214,12 +224,22 @@ class SPXStraddleCalculator:
                 limit=50000
             )
             
-            if not aggs or not hasattr(aggs, 'results') or not aggs.results:
+            # Handle both list response and object with results attribute
+            if not aggs:
+                logger.warning(f"[SPX_STRADDLE] No option data received for {option_ticker}")
+                return None
+            
+            # Check if aggs is a list (new format) or has results attribute (old format)
+            if isinstance(aggs, list):
+                bars = aggs
+            elif hasattr(aggs, 'results') and aggs.results:
+                bars = aggs.results
+            else:
                 logger.warning(f"[SPX_STRADDLE] No option data received for {option_ticker}")
                 return None
             
             # Find the 9:31 AM candle
-            for bar in aggs.results:
+            for bar in bars:
                 bar_time = datetime.fromtimestamp(bar.timestamp / 1000, tz=et_tz)
                 if bar_time.hour == 9 and bar_time.minute == 31:
                     logger.info(f"[SPX_STRADDLE] Found 9:31 AM option candle for {option_ticker}: "
