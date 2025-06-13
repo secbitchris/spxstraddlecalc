@@ -313,7 +313,8 @@ async def backfill_scenario(scenario: str, background_tasks: BackgroundTasks):
     
     # Run backfill in background
     async def run_backfill():
-        backfill = HistoricalBackfill(calculator.polygon_api_key, calculator.redis_url)
+        api_key = os.getenv('POLYGON_API_KEY')
+        backfill = HistoricalBackfill(api_key, calculator.redis_url)
         try:
             await backfill.initialize()
             result = await backfill.backfill_date_range(
@@ -371,7 +372,8 @@ async def backfill_custom(
         
         # Run backfill in background
         async def run_backfill():
-            backfill = HistoricalBackfill(calculator.polygon_api_key, calculator.redis_url)
+            api_key = os.getenv('POLYGON_API_KEY')
+            backfill = HistoricalBackfill(api_key, calculator.redis_url)
             try:
                 await backfill.initialize()
                 result = await backfill.backfill_date_range(

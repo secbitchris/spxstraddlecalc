@@ -309,33 +309,22 @@ class HistoricalBackfill:
         try:
             stats = summary['summary']
             
-            embed = {
-                "title": "📊 Historical Backfill Completed",
-                "color": 0x00ff00 if stats['success_rate'] > 80 else 0xff9900,
-                "fields": [
-                    {
-                        "name": "📅 Date Range",
-                        "value": f"{stats['start_date']} to {stats['end_date']}",
-                        "inline": False
-                    },
-                    {
-                        "name": "📈 Results",
-                        "value": f"✅ Success: {stats['successful_days']}\n"
-                                f"❌ Failed: {stats['failed_days']}\n"
-                                f"⏭️ Skipped: {stats['skipped_days']}",
-                        "inline": True
-                    },
-                    {
-                        "name": "📊 Statistics",
-                        "value": f"Success Rate: {stats['success_rate']:.1f}%\n"
-                                f"Duration: {stats['duration_seconds']:.0f}s",
-                        "inline": True
-                    }
-                ],
-                "timestamp": datetime.now(self.et_tz).isoformat()
-            }
+            message = f"""📊 **Historical Backfill Completed**
+
+📅 **Date Range:** {stats['start_date']} to {stats['end_date']}
+
+📈 **Results:**
+✅ Success: {stats['successful_days']}
+❌ Failed: {stats['failed_days']}
+⏭️ Skipped: {stats['skipped_days']}
+
+📊 **Statistics:**
+Success Rate: {stats['success_rate']:.1f}%
+Duration: {stats['duration_seconds']:.0f}s
+
+⏰ **Completed:** {datetime.now(self.et_tz).strftime('%Y-%m-%d %H:%M:%S ET')}"""
             
-            await self.notifier.send_message_with_embed(embed)
+            await self.notifier.send_message(message)
             
         except Exception as e:
             logger.error(f"Failed to send backfill notification: {e}")
