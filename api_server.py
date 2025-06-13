@@ -226,7 +226,7 @@ async def get_spx_straddle_status():
             "calculation_status": straddle_data.get('calculation_status', 'unknown'),
             "redis_connected": calculator.redis is not None,
             "polygon_configured": True,  # If we got here, Polygon is configured
-            "discord_status": discord_notifier.get_status() if discord_notifier else {"enabled": False},
+            "discord_enabled": discord_notifier.is_enabled() if discord_notifier else False,
             "timestamp": datetime.now(pytz.timezone('US/Eastern')).isoformat()
         }
         
@@ -420,8 +420,8 @@ async def get_spx_straddle_dashboard():
         # Get statistics
         stats_data = await calculator.calculate_spx_straddle_statistics(30)
         
-        # Get Discord status
-        discord_status = discord_notifier.get_status() if discord_notifier else {"enabled": False}
+        # Check if Discord is configured
+        discord_enabled = discord_notifier.is_enabled() if discord_notifier else False
         
         # Build HTML response
         html_content = f"""
@@ -472,14 +472,7 @@ async def get_spx_straddle_dashboard():
                 .btn:hover {{ background: #0056b3; }}
                 .btn-success {{ background: #28a745; }}
                 .btn-success:hover {{ background: #1e7e34; }}
-                .discord-status {{ 
-                    padding: 8px 12px; 
-                    border-radius: 4px; 
-                    font-size: 0.9em;
-                    display: inline-block;
-                }}
-                .discord-enabled {{ background: #d4edda; color: #155724; }}
-                .discord-disabled {{ background: #f8d7da; color: #721c24; }}
+
             </style>
         </head>
         <body>
@@ -493,11 +486,7 @@ async def get_spx_straddle_dashboard():
                     <h2>🎯 Current Status</h2>
                     <p><strong>Status:</strong> <span class="status-{current_data.get('calculation_status', 'unknown')}">{current_data.get('calculation_status', 'Unknown').upper().replace('_', ' ')}</span></p>
                     <p><strong>Last Update:</strong> {current_data.get('timestamp', 'N/A')}</p>
-                    
-                    <div class="discord-status {'discord-enabled' if discord_status.get('enabled') else 'discord-disabled'}">
-                        Discord: {'✅ Connected' if discord_status.get('connected') else '❌ Disabled/Disconnected'}
-                        {f" (#{discord_status.get('channel_name', 'unknown')})" if discord_status.get('connected') else ''}
-                    </div>
+                    <p><strong>Discord Notifications:</strong> {'✅ Enabled' if discord_enabled else '❌ Disabled'}</p>
         """
         
         # Add current straddle data if available

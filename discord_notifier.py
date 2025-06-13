@@ -309,13 +309,4 @@ class DiscordNotifier:
     
     def is_enabled(self) -> bool:
         """Check if Discord webhook notifications are enabled"""
-        return self.enabled and bool(self.webhook_url)
-    
-    def get_status(self) -> Dict[str, Any]:
-        """Get Discord webhook notifier status"""
-        return {
-            'enabled': self.enabled,
-            'webhook_configured': bool(self.webhook_url),
-            'webhook_url_set': bool(self.webhook_url),
-            'type': 'webhook'
-        } 
+        return self.enabled and bool(self.webhook_url) 
