@@ -10,6 +10,7 @@ from datetime import datetime, date
 import pytz
 from spx_calculator import SPXStraddleCalculator
 from discord_notifier import DiscordNotifier
+from gist_publisher import GistPublisher
 import os
 from dotenv import load_dotenv
 
@@ -41,11 +42,12 @@ app.add_middleware(
 # Global instances
 calculator = None
 discord_notifier = None
+gist_publisher = None
 
 @app.on_event("startup")
 async def startup_event():
-    """Initialize the SPX calculator and Discord notifier on startup"""
-    global calculator, discord_notifier
+    """Initialize the SPX calculator, Discord notifier, and Gist publisher on startup"""
+    global calculator, discord_notifier, gist_publisher
     
     # Initialize calculator
     polygon_api_key = os.getenv("POLYGON_API_KEY")
@@ -65,11 +67,18 @@ async def startup_event():
         logger.info("Discord notifier initialized and connected")
     else:
         logger.info("Discord notifier disabled or not configured")
+    
+    # Initialize Gist publisher
+    gist_publisher = GistPublisher()
+    if gist_publisher.is_enabled():
+        logger.info("Gist publisher initialized and ready")
+    else:
+        logger.info("Gist publisher disabled or not configured")
 
 @app.on_event("shutdown")
 async def shutdown_event():
     """Clean up on shutdown"""
-    global calculator, discord_notifier
+    global calculator, discord_notifier, gist_publisher
     if calculator:
         await calculator.close()
     if discord_notifier:
@@ -84,7 +93,8 @@ async def health_check():
         "timestamp": datetime.now(pytz.timezone('US/Eastern')).isoformat(),
         "services": {
             "calculator": calculator is not None,
-            "discord": discord_notifier.is_enabled() if discord_notifier else False
+            "discord": discord_notifier.is_enabled() if discord_notifier else False,
+            "gist_publisher": gist_publisher.is_enabled() if gist_publisher else False
         }
     }
 
@@ -153,8 +163,21 @@ async def get_spx_straddle_statistics(days: int = 30):
 async def get_multi_timeframe_statistics():
     """Get SPX straddle statistics across multiple timeframes"""
     try:
-        # Define timeframes (in days)
-        timeframes = [30, 45, 60, 90, 120, 180, 240, 360, 540, 720, 900]
+        # Calculate YTD (Year-to-Date) days
+        et_tz = pytz.timezone('US/Eastern')
+        current_date = datetime.now(et_tz).date()
+        year_start = date(current_date.year, 1, 1)
+        ytd_days = (current_date - year_start).days + 1  # +1 to include today
+        
+        # Define timeframes (in days) - include daily granularity and YTD as dynamic timeframe
+        daily_timeframes = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]
+        weekly_monthly_timeframes = [30, 45, 60, 90, 120, 180, 240, 360, 540, 720, 900]
+        timeframes = daily_timeframes + weekly_monthly_timeframes
+        
+        # Add YTD if it's different from existing timeframes and reasonable
+        if ytd_days >= 5 and ytd_days not in timeframes:
+            timeframes.append(ytd_days)
+            timeframes.sort()
         
         results = {
             "status": "success",
@@ -171,24 +194,55 @@ async def get_multi_timeframe_statistics():
                 stats = await calculator.calculate_spx_straddle_statistics(days)
                 
                 if stats.get('status') == 'success' and stats.get('data_points', 0) >= 5:
-                    # Only include timeframes with sufficient data (5+ points)
-                    results["timeframes"][f"{days}d"] = {
-                        "period_days": days,
-                        "data_points": stats.get('data_points', 0),
-                        "descriptive_stats": stats.get('descriptive_stats', {}),
-                        "trend_analysis": stats.get('trend_analysis', {}),
-                        "volatility_analysis": stats.get('volatility_analysis', {}),
-                        "recent_comparison": stats.get('recent_comparison', {})
-                    }
-                    results["summary"]["available_timeframes"].append(days)
+                    # Determine timeframe key (YTD gets special treatment)
+                    if days == ytd_days:
+                        timeframe_key = "ytd"
+                        timeframe_label = f"YTD ({days}d)"
+                    else:
+                        timeframe_key = f"{days}d"
+                        timeframe_label = f"{days}d"
                     
                     # Track data coverage
                     data_points = stats.get('data_points', 0)
-                    coverage_pct = (data_points / days) * 100 if days > 0 else 0
-                    results["summary"]["data_coverage"][f"{days}d"] = {
+                    
+                    # Calculate coverage based on trading days, not calendar days
+                    # Markets are closed on weekends and holidays
+                    if days <= 7:
+                        # For short timeframes (≤1 week), use calendar days since weekends matter
+                        actual_days_in_range = days + 1  # Inclusive range
+                    else:
+                        # For longer timeframes, estimate trading days (≈5/7 of calendar days)
+                        calendar_days = days + 1  # Inclusive range
+                        estimated_trading_days = (calendar_days / 7) * 5  # ~5 trading days per week
+                        actual_days_in_range = estimated_trading_days
+                    
+                    coverage_pct = (data_points / actual_days_in_range) * 100 if actual_days_in_range > 0 else 0
+                    
+                    # Only include timeframes with sufficient data (5+ points)
+                    results["timeframes"][timeframe_key] = {
+                        "period_days": days,
+                        "period_label": timeframe_label,
+                        "is_ytd": days == ytd_days,
+                        "data_points": stats.get('data_points', 0),
+                        "coverage_percentage": round(coverage_pct, 1),
+                        "descriptive_stats": stats.get('descriptive_stats', {}),
+                        "trend_analysis": stats.get('trend_analysis', {}),
+                        "volatility_analysis": stats.get('volatility_analysis', {}),
+                        "recent_comparison": stats.get('recent_comparison', {}),
+                        "percentiles": {
+                            "25th": stats.get('descriptive_stats', {}).get('percentile_25', 0),
+                            "75th": stats.get('descriptive_stats', {}).get('percentile_75', 0),
+                            "90th": stats.get('descriptive_stats', {}).get('percentile_90', 0),
+                            "95th": stats.get('descriptive_stats', {}).get('percentile_95', 0)
+                        }
+                    }
+                    results["summary"]["available_timeframes"].append(days)
+                    
+                    results["summary"]["data_coverage"][timeframe_key] = {
                         "data_points": data_points,
                         "possible_days": days,
-                        "coverage_percentage": round(coverage_pct, 1)
+                        "coverage_percentage": round(coverage_pct, 1),
+                        "is_ytd": days == ytd_days
                     }
                     
             except Exception as e:
@@ -203,6 +257,15 @@ async def get_multi_timeframe_statistics():
             
             results["summary"]["recommended_timeframe"] = max_data_timeframe
             results["summary"]["total_timeframes"] = len(results["timeframes"])
+            
+            # Add YTD information
+            results["summary"]["ytd_info"] = {
+                "ytd_days": ytd_days,
+                "year": current_date.year,
+                "ytd_included": "ytd" in results["timeframes"],
+                "ytd_start_date": year_start.isoformat(),
+                "ytd_end_date": current_date.isoformat()
+            }
             
             # Calculate trend consistency across timeframes
             trends = [tf["trend_analysis"].get("direction", "unknown") 
@@ -219,6 +282,207 @@ async def get_multi_timeframe_statistics():
     except Exception as e:
         logger.error(f"Error getting multi-timeframe statistics: {e}")
         raise HTTPException(status_code=500, detail="Failed to retrieve multi-timeframe statistics")
+
+@app.get("/api/spx-straddle/statistics/full-report")
+async def get_full_statistics_report():
+    """Get a comprehensive formatted text report of all timeframe statistics for GitHub Gist"""
+    try:
+        # Get multi-timeframe data
+        multi_stats = await get_multi_timeframe_statistics()
+        
+        if multi_stats.get('status') != 'success':
+            raise HTTPException(status_code=500, detail="Failed to retrieve statistics data")
+        
+        timeframes = multi_stats.get('timeframes', {})
+        summary = multi_stats.get('summary', {})
+        
+        # Generate formatted report
+        et_tz = pytz.timezone('US/Eastern')
+        timestamp = datetime.now(et_tz).strftime('%Y-%m-%d %H:%M:%S ET')
+        
+        report = f"""# SPX 0DTE Straddle Complete Multi-Timeframe Analysis
+Generated: {timestamp}
+Total Historical Data: {summary.get('total_data_points', 'N/A')} trading days
+
+## Executive Summary
+This comprehensive analysis covers {len(timeframes)} timeframes from daily (1D) to long-term (900D) perspectives, providing insights into SPX 0DTE straddle cost volatility patterns across different time horizons.
+
+## Detailed Timeframe Analysis
+
+"""
+        
+        # Sort timeframes by period days for logical progression
+        sorted_timeframes = sorted(timeframes.items(), key=lambda x: x[1].get('period_days', 0))
+        
+        for timeframe_key, tf_data in sorted_timeframes:
+            period_label = tf_data.get('period_label', timeframe_key)
+            period_days = tf_data.get('period_days', 0)
+            data_points = tf_data.get('data_points', 0)
+            coverage = tf_data.get('coverage_percentage', 0)
+            
+            # Descriptive stats
+            desc_stats = tf_data.get('descriptive_stats', {})
+            mean_cost = desc_stats.get('mean', 0)
+            median_cost = desc_stats.get('median', 0)
+            std_dev = desc_stats.get('std_dev', 0)
+            min_cost = desc_stats.get('min', 0)
+            max_cost = desc_stats.get('max', 0)
+            
+            # Trend analysis
+            trend_analysis = tf_data.get('trend_analysis', {})
+            trend_direction = trend_analysis.get('direction', 'unknown')
+            trend_strength = trend_analysis.get('strength', 'unknown')
+            
+            # Volatility analysis
+            vol_analysis = tf_data.get('volatility_analysis', {})
+            vol_category = vol_analysis.get('category', 'unknown')
+            coefficient_of_variation = vol_analysis.get('coefficient_of_variation', 0)
+            
+            # Percentiles
+            percentiles = tf_data.get('percentiles', {})
+            p25 = percentiles.get('25th', 0)
+            p75 = percentiles.get('75th', 0)
+            p90 = percentiles.get('90th', 0)
+            p95 = percentiles.get('95th', 0)
+            
+            # Format section
+            report += f"""### {period_label}
+**Data Coverage:** {data_points} data points
+
+**Central Tendency:**
+- Mean: ${mean_cost:.2f}
+- Median: ${median_cost:.2f}
+- Standard Deviation: ${std_dev:.2f}
+
+**Range & Distribution:**
+- Minimum: ${min_cost:.2f}
+- Maximum: ${max_cost:.2f}
+- 25th Percentile: ${p25:.2f}
+- 75th Percentile: ${p75:.2f}
+- 90th Percentile: ${p90:.2f}
+- 95th Percentile: ${p95:.2f}
+
+**Trend Analysis:**
+- Direction: {trend_direction.title()}
+- Strength: {trend_strength.title()}
+
+**Volatility Profile:**
+- Category: {vol_category.title()}
+- Coefficient of Variation: {coefficient_of_variation:.1f}%
+
+---
+
+"""
+        
+        # Add comparative analysis
+        report += """## Comparative Analysis
+
+### Volatility Regime Classification
+"""
+        
+        # Group by volatility categories
+        vol_categories = {'low': [], 'medium': [], 'high': []}
+        for timeframe_key, tf_data in timeframes.items():
+            vol_cat = tf_data.get('volatility_analysis', {}).get('category', 'unknown')
+            if vol_cat in vol_categories:
+                vol_categories[vol_cat].append((timeframe_key, tf_data))
+        
+        for vol_cat, timeframe_list in vol_categories.items():
+            if timeframe_list:
+                report += f"\n**{vol_cat.title()} Volatility Timeframes:**\n"
+                for tf_key, tf_data in timeframe_list:
+                    period_label = tf_data.get('period_label', tf_key)
+                    mean_cost = tf_data.get('descriptive_stats', {}).get('mean', 0)
+                    cv = tf_data.get('volatility_analysis', {}).get('coefficient_of_variation', 0)
+                    report += f"- {period_label}: ${mean_cost:.2f} avg (CV: {cv:.1f}%)\n"
+        
+        # Add trend analysis summary
+        report += "\n### Trend Direction Summary\n"
+        trend_categories = {'increasing': [], 'decreasing': [], 'stable': []}
+        for timeframe_key, tf_data in timeframes.items():
+            trend_dir = tf_data.get('trend_analysis', {}).get('direction', 'unknown')
+            if trend_dir in trend_categories:
+                trend_categories[trend_dir].append((timeframe_key, tf_data))
+        
+        for trend_dir, timeframe_list in trend_categories.items():
+            if timeframe_list:
+                report += f"\n**{trend_dir.title()} Trend Timeframes:**\n"
+                for tf_key, tf_data in timeframe_list:
+                    period_label = tf_data.get('period_label', tf_key)
+                    mean_cost = tf_data.get('descriptive_stats', {}).get('mean', 0)
+                    report += f"- {period_label}: ${mean_cost:.2f} avg\n"
+        
+        # Add methodology note
+        report += f"""
+
+## Methodology
+- **Data Source:** Polygon.io SPX and SPXW options data
+- **Calculation:** At-the-money (ATM) straddle cost at 9:30 AM ET
+- **Strike Selection:** Rounded to nearest $5 increment
+- **Timeframes:** {len(timeframes)} periods from 1 day to 900 days
+- **Analysis Date:** {timestamp}
+
+## Disclaimer
+This analysis is for educational and informational purposes only. Past performance does not guarantee future results. Options trading involves significant risk and may not be suitable for all investors.
+"""
+        
+        return {
+            "status": "success",
+            "report": report,
+            "metadata": {
+                "timestamp": timestamp,
+                "timeframes_analyzed": len(timeframes),
+                "total_data_points": summary.get('total_data_points', 0),
+                "report_length": len(report)
+            }
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error generating full statistics report: {e}")
+        raise HTTPException(status_code=500, detail="Failed to generate statistics report")
+
+@app.post("/api/spx-straddle/statistics/publish-gist")
+async def publish_statistics_gist():
+    """Publish the full statistics report as a GitHub Gist"""
+    try:
+        if not gist_publisher or not gist_publisher.is_enabled():
+            raise HTTPException(status_code=503, detail="GitHub Gist publishing is not configured")
+        
+        # Get the full report
+        full_report_response = await get_full_statistics_report()
+        
+        if full_report_response.get("status") != "success":
+            raise HTTPException(status_code=500, detail="Failed to generate statistics report")
+        
+        # Publish to Gist
+        gist_result = await gist_publisher.publish_analysis_report(
+            full_report_response["report"],
+            full_report_response["metadata"]
+        )
+        
+        if not gist_result or gist_result.get("status") != "success":
+            error_msg = gist_result.get("error", "Unknown error") if gist_result else "Failed to create Gist"
+            raise HTTPException(status_code=500, detail=f"Failed to publish Gist: {error_msg}")
+        
+        return {
+            "status": "success",
+            "message": "Analysis report published to GitHub Gist",
+            "gist": {
+                "url": gist_result["url"],
+                "id": gist_result["id"],
+                "created_at": gist_result["created_at"],
+                "description": gist_result["description"]
+            },
+            "report_metadata": full_report_response["metadata"]
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error publishing statistics Gist: {e}")
+        raise HTTPException(status_code=500, detail="Failed to publish statistics Gist")
 
 @app.get("/api/spx-straddle/patterns")
 async def get_spx_straddle_patterns(days: int = 30):
@@ -298,6 +562,7 @@ async def get_spx_straddle_status():
             "redis_connected": calculator.redis is not None,
             "polygon_configured": True,  # If we got here, Polygon is configured
             "discord_enabled": discord_notifier.is_enabled() if discord_notifier else False,
+            "gist_publisher_enabled": gist_publisher.is_enabled() if gist_publisher else False,
             "timestamp": datetime.now(pytz.timezone('US/Eastern')).isoformat()
         }
         
@@ -371,6 +636,25 @@ async def notify_discord_multi_timeframe(background_tasks: BackgroundTasks):
     except Exception as e:
         logger.error(f"Error queuing multi-timeframe Discord notification: {e}")
         raise HTTPException(status_code=500, detail="Failed to queue multi-timeframe Discord notification")
+
+@app.post("/api/discord/notify/daily-timeframes")
+async def notify_discord_daily_timeframes(background_tasks: BackgroundTasks):
+    """Send daily timeframe statistics (1D-14D) to Discord"""
+    if not discord_notifier or not discord_notifier.is_enabled():
+        raise HTTPException(status_code=400, detail="Discord notifications not enabled or configured")
+    
+    try:
+        # Get multi-timeframe statistics (includes daily timeframes now)
+        multi_stats = await get_multi_timeframe_statistics()
+        
+        # Queue Discord notification for daily timeframes
+        background_tasks.add_task(discord_notifier.notify_daily_timeframe_statistics, multi_stats)
+        
+        return {"status": "success", "message": "Daily timeframe Discord notification queued"}
+        
+    except Exception as e:
+        logger.error(f"Error queuing daily timeframe Discord notification: {e}")
+        raise HTTPException(status_code=500, detail="Failed to queue daily timeframe Discord notification")
 
 # Historical backfill endpoints
 @app.post("/api/spx-straddle/backfill/scenario/{scenario}")
@@ -639,7 +923,6 @@ async def get_spx_straddle_dashboard():
                                 <tr>
                                     <th>Period</th>
                                     <th>Data Points</th>
-                                    <th>Coverage</th>
                                     <th>Average</th>
                                     <th>Range</th>
                                     <th>Trend</th>
@@ -661,8 +944,10 @@ async def get_spx_straddle_dashboard():
                 trend = data.get('trend_analysis', {})
                 volatility = data.get('volatility_analysis', {})
                 
-                # Format period name
-                if period_days < 30:
+                # Format period name (use period_label if available, especially for YTD)
+                if data.get('is_ytd', False):
+                    period_name = f"📅 {data.get('period_label', 'YTD')}"
+                elif period_days < 30:
                     period_name = f"{period_days}d"
                 elif period_days < 365:
                     period_name = f"{period_days//30}m" if period_days % 30 == 0 else f"{period_days}d"
@@ -680,7 +965,6 @@ async def get_spx_straddle_dashboard():
                                 <tr>
                                     <td><strong>{period_name}</strong></td>
                                     <td>{data_points}</td>
-                                    <td>{coverage:.1f}%</td>
                                     <td>${desc_stats.get('mean', 0):.2f}</td>
                                     <td>${desc_stats.get('min', 0):.2f} - ${desc_stats.get('max', 0):.2f}</td>
                                     <td>{trend_emoji} {trend.get('direction', 'Unknown').title()}</td>
@@ -879,6 +1163,8 @@ async def get_spx_straddle_dashboard():
                                 <li><a href="/api/spx-straddle/today">Today's Data</a></li>
                                 <li><a href="/api/spx-straddle/history?days=30">30-Day History</a></li>
                                 <li><a href="/api/spx-straddle/statistics?days=30">30-Day Statistics</a></li>
+                                <li><a href="/api/spx-straddle/statistics/multi-timeframe">Multi-Timeframe Statistics</a></li>
+                                <li><a href="/api/spx-straddle/statistics/full-report">📋 Full Analysis Report (for Gist)</a></li>
                                 <li><a href="/api/spx-straddle/export/csv?days=30">Export CSV</a></li>
                                 <li><a href="/api/spx-straddle/status">System Status</a></li>
                             </ul>
@@ -890,6 +1176,8 @@ async def get_spx_straddle_dashboard():
                                 <li><a href="/api/discord/test">Test Discord</a></li>
                                 <li><a href="/api/discord/notify/today">Notify Discord</a></li>
                                 <li><a href="/api/discord/notify/multi-timeframe">📊 Send Multi-Timeframe to Discord</a></li>
+                                <li><a href="/api/discord/notify/daily-timeframes">⚡ Send Daily Analysis to Discord</a></li>
+                                <li><a href="/api/spx-straddle/statistics/publish-gist">🔗 Publish Analysis to GitHub Gist</a></li>
                                 <li><a href="/docs">API Documentation</a></li>
                             </ul>
                         </div>
