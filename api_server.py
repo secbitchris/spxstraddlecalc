@@ -282,6 +282,129 @@ async def notify_discord_today(background_tasks: BackgroundTasks, include_stats:
         logger.error(f"Error queuing Discord notification: {e}")
         raise HTTPException(status_code=500, detail="Failed to queue Discord notification")
 
+# Historical backfill endpoints
+@app.post("/api/spx-straddle/backfill/scenario/{scenario}")
+async def backfill_scenario(scenario: str, background_tasks: BackgroundTasks):
+    """Run predefined backfill scenarios"""
+    from historical_backfill import HistoricalBackfill
+    from datetime import timedelta
+    
+    et_tz = pytz.timezone('US/Eastern')
+    today = datetime.now(et_tz).date()
+    
+    scenarios = {
+        "1week": {"days": 7, "description": "Last 7 days"},
+        "1month": {"days": 30, "description": "Last 30 days"},
+        "3months": {"days": 90, "description": "Last 3 months"},
+        "6months": {"days": 180, "description": "Last 6 months"},
+        "1year": {"days": 365, "description": "Last 1 year"},
+        "2years": {"days": 730, "description": "Last 2 years"}
+    }
+    
+    if scenario not in scenarios:
+        raise HTTPException(
+            status_code=400, 
+            detail=f"Unknown scenario: {scenario}. Available: {', '.join(scenarios.keys())}"
+        )
+    
+    config = scenarios[scenario]
+    start_date = today - timedelta(days=config["days"])
+    end_date = today - timedelta(days=1)
+    
+    # Run backfill in background
+    async def run_backfill():
+        backfill = HistoricalBackfill(calculator.polygon_api_key, calculator.redis_url)
+        try:
+            await backfill.initialize()
+            result = await backfill.backfill_date_range(
+                start_date=start_date,
+                end_date=end_date,
+                batch_size=5,
+                delay_between_batches=2.0
+            )
+            logger.info(f"Backfill {scenario} completed: {result['summary']}")
+        except Exception as e:
+            logger.error(f"Backfill {scenario} failed: {e}")
+        finally:
+            await backfill.close()
+    
+    background_tasks.add_task(run_backfill)
+    
+    return {
+        "status": "started",
+        "scenario": scenario,
+        "description": config["description"],
+        "date_range": {
+            "start_date": start_date.isoformat(),
+            "end_date": end_date.isoformat()
+        },
+        "message": f"Backfill for {config['description']} started in background"
+    }
+
+@app.post("/api/spx-straddle/backfill/custom")
+async def backfill_custom(
+    background_tasks: BackgroundTasks,
+    start_date: str,
+    end_date: str = None,
+    batch_size: int = 5,
+    delay: float = 2.0
+):
+    """Run custom date range backfill"""
+    from historical_backfill import HistoricalBackfill
+    
+    try:
+        # Parse dates
+        start_dt = datetime.strptime(start_date, '%Y-%m-%d').date()
+        
+        if end_date:
+            end_dt = datetime.strptime(end_date, '%Y-%m-%d').date()
+        else:
+            et_tz = pytz.timezone('US/Eastern')
+            end_dt = datetime.now(et_tz).date() - timedelta(days=1)
+        
+        # Validate dates
+        today = datetime.now(pytz.timezone('US/Eastern')).date()
+        if start_dt >= end_dt:
+            raise HTTPException(status_code=400, detail="Start date must be before end date")
+        if end_dt >= today:
+            raise HTTPException(status_code=400, detail="End date must be before today")
+        
+        # Run backfill in background
+        async def run_backfill():
+            backfill = HistoricalBackfill(calculator.polygon_api_key, calculator.redis_url)
+            try:
+                await backfill.initialize()
+                result = await backfill.backfill_date_range(
+                    start_date=start_dt,
+                    end_date=end_dt,
+                    batch_size=batch_size,
+                    delay_between_batches=delay
+                )
+                logger.info(f"Custom backfill completed: {result['summary']}")
+            except Exception as e:
+                logger.error(f"Custom backfill failed: {e}")
+            finally:
+                await backfill.close()
+        
+        background_tasks.add_task(run_backfill)
+        
+        return {
+            "status": "started",
+            "date_range": {
+                "start_date": start_dt.isoformat(),
+                "end_date": end_dt.isoformat()
+            },
+            "batch_size": batch_size,
+            "delay": delay,
+            "message": f"Custom backfill from {start_dt} to {end_dt} started in background"
+        }
+        
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=f"Invalid date format. Use YYYY-MM-DD: {e}")
+    except Exception as e:
+        logger.error(f"Error starting custom backfill: {e}")
+        raise HTTPException(status_code=500, detail="Failed to start backfill")
+
 @app.get("/api/spx-straddle/dashboard", response_class=HTMLResponse)
 async def get_spx_straddle_dashboard():
     """Simple HTML dashboard for SPX straddle data"""
@@ -486,6 +609,101 @@ async def get_spx_straddle_dashboard():
             """
         
         html_content += """
+                <div class="card">
+                    <h2>📊 Historical Data Backfill</h2>
+                    <p>Backfill historical SPX straddle data for trend and volatility analysis.</p>
+                    
+                    <div class="grid">
+                        <div>
+                            <h3>Quick Scenarios</h3>
+                            <p>Run predefined backfill scenarios:</p>
+                            <button onclick="runBackfill('1week')" class="btn">📅 Last Week</button>
+                            <button onclick="runBackfill('1month')" class="btn">📅 Last Month</button>
+                            <button onclick="runBackfill('3months')" class="btn">📅 Last 3 Months</button>
+                            <button onclick="runBackfill('6months')" class="btn">📅 Last 6 Months</button>
+                            <button onclick="runBackfill('1year')" class="btn">📅 Last Year</button>
+                            <button onclick="runBackfill('2years')" class="btn">📅 Last 2 Years</button>
+                        </div>
+                        <div>
+                            <h3>Custom Date Range</h3>
+                            <p>Specify custom date range:</p>
+                            <input type="date" id="startDate" style="margin: 5px; padding: 8px;">
+                            <input type="date" id="endDate" style="margin: 5px; padding: 8px;">
+                            <br>
+                            <button onclick="runCustomBackfill()" class="btn" style="margin-top: 10px;">🚀 Start Custom Backfill</button>
+                        </div>
+                    </div>
+                    
+                    <div id="backfillStatus" style="margin-top: 15px; padding: 10px; border-radius: 4px; display: none;"></div>
+                    
+                    <script>
+                        async function runBackfill(scenario) {
+                            const statusDiv = document.getElementById('backfillStatus');
+                            statusDiv.style.display = 'block';
+                            statusDiv.style.backgroundColor = '#d1ecf1';
+                            statusDiv.style.color = '#0c5460';
+                            statusDiv.innerHTML = `🔄 Starting ${scenario} backfill...`;
+                            
+                            try {
+                                const response = await fetch(`/api/spx-straddle/backfill/scenario/${scenario}`, {
+                                    method: 'POST'
+                                });
+                                const result = await response.json();
+                                
+                                if (response.ok) {
+                                    statusDiv.style.backgroundColor = '#d4edda';
+                                    statusDiv.style.color = '#155724';
+                                    statusDiv.innerHTML = `✅ ${result.message}<br>Date range: ${result.date_range.start_date} to ${result.date_range.end_date}`;
+                                } else {
+                                    throw new Error(result.detail || 'Unknown error');
+                                }
+                            } catch (error) {
+                                statusDiv.style.backgroundColor = '#f8d7da';
+                                statusDiv.style.color = '#721c24';
+                                statusDiv.innerHTML = `❌ Error: ${error.message}`;
+                            }
+                        }
+                        
+                        async function runCustomBackfill() {
+                            const startDate = document.getElementById('startDate').value;
+                            const endDate = document.getElementById('endDate').value;
+                            const statusDiv = document.getElementById('backfillStatus');
+                            
+                            if (!startDate) {
+                                alert('Please select a start date');
+                                return;
+                            }
+                            
+                            statusDiv.style.display = 'block';
+                            statusDiv.style.backgroundColor = '#d1ecf1';
+                            statusDiv.style.color = '#0c5460';
+                            statusDiv.innerHTML = '🔄 Starting custom backfill...';
+                            
+                            try {
+                                const params = new URLSearchParams({ start_date: startDate });
+                                if (endDate) params.append('end_date', endDate);
+                                
+                                const response = await fetch(`/api/spx-straddle/backfill/custom?${params}`, {
+                                    method: 'POST'
+                                });
+                                const result = await response.json();
+                                
+                                if (response.ok) {
+                                    statusDiv.style.backgroundColor = '#d4edda';
+                                    statusDiv.style.color = '#155724';
+                                    statusDiv.innerHTML = `✅ ${result.message}`;
+                                } else {
+                                    throw new Error(result.detail || 'Unknown error');
+                                }
+                            } catch (error) {
+                                statusDiv.style.backgroundColor = '#f8d7da';
+                                statusDiv.style.color = '#721c24';
+                                statusDiv.innerHTML = `❌ Error: ${error.message}`;
+                            }
+                        }
+                    </script>
+                </div>
+                
                 <div class="card">
                     <h2>🔗 API Endpoints</h2>
                     <div class="grid">
