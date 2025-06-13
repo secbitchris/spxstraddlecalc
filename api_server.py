@@ -123,8 +123,8 @@ async def calculate_spx_straddle(background_tasks: BackgroundTasks, notify_disco
 async def get_spx_straddle_history(days: int = 30):
     """Get historical SPX straddle data"""
     try:
-        if days < 1 or days > 365:
-            raise HTTPException(status_code=400, detail="Days parameter must be between 1 and 365")
+        if days < 1 or days > 1000:
+            raise HTTPException(status_code=400, detail="Days parameter must be between 1 and 1000")
         
         result = await calculator.get_spx_straddle_history(days)
         return result
@@ -138,8 +138,8 @@ async def get_spx_straddle_history(days: int = 30):
 async def get_spx_straddle_statistics(days: int = 30):
     """Get SPX straddle statistical analysis"""
     try:
-        if days < 1 or days > 365:
-            raise HTTPException(status_code=400, detail="Days parameter must be between 1 and 365")
+        if days < 1 or days > 1000:
+            raise HTTPException(status_code=400, detail="Days parameter must be between 1 and 1000")
         
         result = await calculator.calculate_spx_straddle_statistics(days)
         return result
@@ -149,12 +149,83 @@ async def get_spx_straddle_statistics(days: int = 30):
         logger.error(f"Error getting straddle statistics: {e}")
         raise HTTPException(status_code=500, detail="Failed to retrieve SPX straddle statistics")
 
+@app.get("/api/spx-straddle/statistics/multi-timeframe")
+async def get_multi_timeframe_statistics():
+    """Get SPX straddle statistics across multiple timeframes"""
+    try:
+        # Define timeframes (in days)
+        timeframes = [30, 45, 60, 90, 120, 180, 240, 360, 540, 720, 900]
+        
+        results = {
+            "status": "success",
+            "timeframes": {},
+            "summary": {
+                "available_timeframes": [],
+                "data_coverage": {},
+                "timestamp": datetime.now(pytz.timezone('US/Eastern')).isoformat()
+            }
+        }
+        
+        for days in timeframes:
+            try:
+                stats = await calculator.calculate_spx_straddle_statistics(days)
+                
+                if stats.get('status') == 'success' and stats.get('data_points', 0) >= 5:
+                    # Only include timeframes with sufficient data (5+ points)
+                    results["timeframes"][f"{days}d"] = {
+                        "period_days": days,
+                        "data_points": stats.get('data_points', 0),
+                        "descriptive_stats": stats.get('descriptive_stats', {}),
+                        "trend_analysis": stats.get('trend_analysis', {}),
+                        "volatility_analysis": stats.get('volatility_analysis', {}),
+                        "recent_comparison": stats.get('recent_comparison', {})
+                    }
+                    results["summary"]["available_timeframes"].append(days)
+                    
+                    # Track data coverage
+                    data_points = stats.get('data_points', 0)
+                    coverage_pct = (data_points / days) * 100 if days > 0 else 0
+                    results["summary"]["data_coverage"][f"{days}d"] = {
+                        "data_points": data_points,
+                        "possible_days": days,
+                        "coverage_percentage": round(coverage_pct, 1)
+                    }
+                    
+            except Exception as e:
+                logger.warning(f"Failed to calculate {days}-day statistics: {e}")
+                continue
+        
+        # Add summary insights
+        if results["timeframes"]:
+            # Find timeframe with most data
+            max_data_timeframe = max(results["timeframes"].keys(), 
+                                   key=lambda x: results["timeframes"][x]["data_points"])
+            
+            results["summary"]["recommended_timeframe"] = max_data_timeframe
+            results["summary"]["total_timeframes"] = len(results["timeframes"])
+            
+            # Calculate trend consistency across timeframes
+            trends = [tf["trend_analysis"].get("direction", "unknown") 
+                     for tf in results["timeframes"].values()]
+            trend_consistency = len(set(trends)) == 1 if trends else False
+            results["summary"]["trend_consistency"] = trend_consistency
+            
+        else:
+            results["status"] = "insufficient_data"
+            results["message"] = "Insufficient data for multi-timeframe analysis (need 5+ data points)"
+        
+        return results
+        
+    except Exception as e:
+        logger.error(f"Error getting multi-timeframe statistics: {e}")
+        raise HTTPException(status_code=500, detail="Failed to retrieve multi-timeframe statistics")
+
 @app.get("/api/spx-straddle/patterns")
 async def get_spx_straddle_patterns(days: int = 30):
     """Get SPX straddle pattern analysis"""
     try:
-        if days < 1 or days > 365:
-            raise HTTPException(status_code=400, detail="Days parameter must be between 1 and 365")
+        if days < 1 or days > 1000:
+            raise HTTPException(status_code=400, detail="Days parameter must be between 1 and 1000")
         
         # This method doesn't exist in the calculator yet, so let's create a placeholder
         return {
@@ -170,8 +241,8 @@ async def get_spx_straddle_patterns(days: int = 30):
 async def export_spx_straddle_csv(days: int = 30):
     """Export SPX straddle historical data as CSV"""
     try:
-        if days < 1 or days > 365:
-            raise HTTPException(status_code=400, detail="Days parameter must be between 1 and 365")
+        if days < 1 or days > 1000:
+            raise HTTPException(status_code=400, detail="Days parameter must be between 1 and 1000")
         
         # Get historical data
         result = await calculator.get_spx_straddle_history(days)
@@ -281,6 +352,25 @@ async def notify_discord_today(background_tasks: BackgroundTasks, include_stats:
     except Exception as e:
         logger.error(f"Error queuing Discord notification: {e}")
         raise HTTPException(status_code=500, detail="Failed to queue Discord notification")
+
+@app.post("/api/discord/notify/multi-timeframe")
+async def notify_discord_multi_timeframe(background_tasks: BackgroundTasks):
+    """Send multi-timeframe statistics to Discord"""
+    if not discord_notifier or not discord_notifier.is_enabled():
+        raise HTTPException(status_code=400, detail="Discord notifications not enabled or configured")
+    
+    try:
+        # Get multi-timeframe statistics
+        multi_stats = await get_multi_timeframe_statistics()
+        
+        # Queue Discord notification
+        background_tasks.add_task(discord_notifier.notify_multi_timeframe_statistics, multi_stats)
+        
+        return {"status": "success", "message": "Multi-timeframe Discord notification queued"}
+        
+    except Exception as e:
+        logger.error(f"Error queuing multi-timeframe Discord notification: {e}")
+        raise HTTPException(status_code=500, detail="Failed to queue multi-timeframe Discord notification")
 
 # Historical backfill endpoints
 @app.post("/api/spx-straddle/backfill/scenario/{scenario}")
@@ -420,6 +510,13 @@ async def get_spx_straddle_dashboard():
         # Get statistics
         stats_data = await calculator.calculate_spx_straddle_statistics(30)
         
+        # Get multi-timeframe statistics
+        try:
+            multi_stats_response = await get_multi_timeframe_statistics()
+            multi_stats = multi_stats_response if isinstance(multi_stats_response, dict) else {}
+        except:
+            multi_stats = {"status": "error"}
+        
         # Check if Discord is configured
         discord_enabled = discord_notifier.is_enabled() if discord_notifier else False
         
@@ -524,8 +621,86 @@ async def get_spx_straddle_dashboard():
                 </div>
         """
         
-        # Add statistics if available
-        if stats_data.get('status') == 'success':
+        # Add multi-timeframe statistics if available
+        if multi_stats.get('status') == 'success' and multi_stats.get('timeframes'):
+            timeframes = multi_stats.get('timeframes', {})
+            summary = multi_stats.get('summary', {})
+            
+            html_content += f"""
+                <div class="card">
+                    <h2>📈 Multi-Timeframe Statistics</h2>
+                    <p><strong>Available Timeframes:</strong> {len(timeframes)} periods with sufficient data</p>
+                    <p><strong>Recommended Analysis Period:</strong> {summary.get('recommended_timeframe', 'N/A')}</p>
+                    <p><strong>Trend Consistency:</strong> {'✅ Consistent' if summary.get('trend_consistency') else '⚠️ Mixed'}</p>
+                    
+                    <div style="overflow-x: auto; margin-top: 20px;">
+                        <table style="min-width: 100%;">
+                            <thead>
+                                <tr>
+                                    <th>Period</th>
+                                    <th>Data Points</th>
+                                    <th>Coverage</th>
+                                    <th>Average</th>
+                                    <th>Range</th>
+                                    <th>Trend</th>
+                                    <th>Volatility</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+            """
+            
+            # Sort timeframes by period length
+            sorted_timeframes = sorted(timeframes.items(), key=lambda x: x[1]['period_days'])
+            
+            for period_key, data in sorted_timeframes:
+                period_days = data['period_days']
+                data_points = data['data_points']
+                coverage = summary.get('data_coverage', {}).get(period_key, {}).get('coverage_percentage', 0)
+                
+                desc_stats = data.get('descriptive_stats', {})
+                trend = data.get('trend_analysis', {})
+                volatility = data.get('volatility_analysis', {})
+                
+                # Format period name
+                if period_days < 30:
+                    period_name = f"{period_days}d"
+                elif period_days < 365:
+                    period_name = f"{period_days//30}m" if period_days % 30 == 0 else f"{period_days}d"
+                else:
+                    period_name = f"{period_days//365}y" if period_days % 365 == 0 else f"{period_days}d"
+                
+                # Trend emoji
+                trend_emoji = "📈" if trend.get('direction') == 'increasing' else "📉" if trend.get('direction') == 'decreasing' else "➡️"
+                
+                # Volatility color
+                vol_category = volatility.get('category', 'unknown')
+                vol_color = '#28a745' if vol_category == 'low' else '#ffc107' if vol_category == 'medium' else '#dc3545'
+                
+                html_content += f"""
+                                <tr>
+                                    <td><strong>{period_name}</strong></td>
+                                    <td>{data_points}</td>
+                                    <td>{coverage:.1f}%</td>
+                                    <td>${desc_stats.get('mean', 0):.2f}</td>
+                                    <td>${desc_stats.get('min', 0):.2f} - ${desc_stats.get('max', 0):.2f}</td>
+                                    <td>{trend_emoji} {trend.get('direction', 'Unknown').title()}</td>
+                                    <td><span style="color: {vol_color};">{vol_category.title()}</span></td>
+                                </tr>
+                """
+            
+            html_content += """
+                            </tbody>
+                        </table>
+                    </div>
+                    
+                    <div style="margin-top: 20px;">
+                        <a href="/api/spx-straddle/statistics/multi-timeframe" class="btn">📊 View Full Multi-Timeframe Data</a>
+                        <a href="/api/spx-straddle/export/csv?days=720" class="btn">📥 Export 2-Year CSV</a>
+                    </div>
+                </div>
+            """
+        elif stats_data.get('status') == 'success':
+            # Fallback to single timeframe if multi-timeframe fails
             stats = stats_data.get('descriptive_stats', {})
             trend = stats_data.get('trend_analysis', {})
             volatility = stats_data.get('volatility_analysis', {})
@@ -714,6 +889,7 @@ async def get_spx_straddle_dashboard():
                                 <li><a href="/api/spx-straddle/calculate">Calculate Straddle</a></li>
                                 <li><a href="/api/discord/test">Test Discord</a></li>
                                 <li><a href="/api/discord/notify/today">Notify Discord</a></li>
+                                <li><a href="/api/discord/notify/multi-timeframe">📊 Send Multi-Timeframe to Discord</a></li>
                                 <li><a href="/docs">API Documentation</a></li>
                             </ul>
                         </div>

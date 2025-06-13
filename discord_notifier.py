@@ -153,6 +153,86 @@ class DiscordNotifier:
             logger.error(f"Error formatting statistics message: {e}")
             return {"content": f"❌ Error formatting statistics: {str(e)}"}
     
+    def format_multi_timeframe_message(self, multi_stats: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Format multi-timeframe statistics into Discord webhook payload
+        
+        Args:
+            multi_stats: Multi-timeframe statistics result
+            
+        Returns:
+            Discord webhook payload dict
+        """
+        try:
+            if multi_stats.get('status') != 'success':
+                return {"content": f"❌ **Multi-Timeframe Statistics Error:** {multi_stats.get('error', 'Unknown error')}"}
+            
+            timeframes = multi_stats.get('timeframes', {})
+            summary = multi_stats.get('summary', {})
+            
+            # Get key timeframes for summary
+            key_periods = ['30d', '90d', '180d', '360d', '720d', '900d']
+            available_periods = [p for p in key_periods if p in timeframes]
+            
+            content = f"""📊 **SPX Straddle Multi-Timeframe Analysis**
+*Historical data spanning {len(available_periods)} key timeframes*
+
+"""
+            
+            # Add timeframe summary
+            for period in available_periods:
+                tf_data = timeframes[period]
+                data_points = tf_data.get('data_points', 0)
+                avg_cost = tf_data.get('descriptive_stats', {}).get('mean', 0)
+                trend = tf_data.get('trend_analysis', {}).get('direction', 'unknown')
+                coverage = summary.get('data_coverage', {}).get(period, {}).get('coverage_percentage', 0)
+                
+                # Trend emoji
+                trend_emoji = {
+                    'increasing': '📈',
+                    'decreasing': '📉', 
+                    'stable': '➡️'
+                }.get(trend, '❓')
+                
+                content += f"**{period.upper()}:** {data_points} pts ({coverage:.0f}%) {trend_emoji} ${avg_cost:.2f} avg\n"
+            
+            # Add key insights
+            total_points = summary.get('data_coverage', {}).get('900d', {}).get('data_points', 0)
+            recommended = summary.get('recommended_timeframe', '900d')
+            
+            content += f"""
+🎯 **Key Insights:**
+• **Total Data Points:** {total_points} trading days
+• **Recommended Analysis:** {recommended.upper()}
+• **Trend Consistency:** {'Mixed trends across timeframes' if not summary.get('trend_consistency', True) else 'Consistent trends'}
+
+📈 **Recent vs Long-term:**"""
+            
+            # Compare recent vs long-term
+            if '30d' in timeframes and '720d' in timeframes:
+                recent_avg = timeframes['30d'].get('descriptive_stats', {}).get('mean', 0)
+                longterm_avg = timeframes['720d'].get('descriptive_stats', {}).get('mean', 0)
+                change_pct = ((recent_avg - longterm_avg) / longterm_avg * 100) if longterm_avg > 0 else 0
+                
+                content += f"""
+• 30-day avg: ${recent_avg:.2f}
+• 720-day avg: ${longterm_avg:.2f}
+• Change: {change_pct:+.1f}%"""
+            
+            # Add volatility insight
+            if '360d' in timeframes:
+                vol_category = timeframes['360d'].get('volatility_analysis', {}).get('category', 'unknown')
+                vol_emoji = {'low': '🟢', 'medium': '🟡', 'high': '🔴'}.get(vol_category, '⚪')
+                content += f"""
+
+🎢 **Volatility Status:** {vol_emoji} {vol_category.title()}"""
+            
+            return {"content": content}
+            
+        except Exception as e:
+            logger.error(f"Error formatting multi-timeframe message: {e}")
+            return {"content": f"❌ Error formatting multi-timeframe statistics: {str(e)}"}
+    
     def format_error_message(self, error: str, context: str = "SPX Straddle") -> Dict[str, Any]:
         """
         Format error message for Discord webhook
@@ -259,6 +339,22 @@ class DiscordNotifier:
             return False
         
         payload = self.format_statistics_message(stats)
+        return await self.send_webhook(payload)
+    
+    async def notify_multi_timeframe_statistics(self, multi_stats: Dict[str, Any]) -> bool:
+        """
+        Send multi-timeframe statistics to Discord webhook
+        
+        Args:
+            multi_stats: Multi-timeframe statistics data
+            
+        Returns:
+            True if sent successfully, False otherwise
+        """
+        if not self.enabled:
+            return False
+        
+        payload = self.format_multi_timeframe_message(multi_stats)
         return await self.send_webhook(payload)
     
     async def notify_error(self, error: str, context: str = "SPX Straddle") -> bool:
