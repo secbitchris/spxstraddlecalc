@@ -31,18 +31,31 @@ class SPXStraddleScheduler:
     """
     
     def __init__(self):
-        """Initialize the scheduler"""
+        """Initialize the scheduler with configuration from environment variables"""
+        self.enable_scheduler = os.getenv("ENABLE_SCHEDULER", "false").lower() == "true"
+        
+        # Parse CALCULATION_TIME with robust error handling for comments
+        calc_time_str = os.getenv("CALCULATION_TIME", "09:47:20")
+        self.calculation_time = calc_time_str.split('#')[0].strip()
+        
+        # Parse CLEANUP_DAY with robust error handling for comments
+        cleanup_day_str = os.getenv("CLEANUP_DAY", "sunday")
+        self.cleanup_day = cleanup_day_str.split('#')[0].strip().lower()
+        
+        # Parse CLEANUP_TIME with robust error handling for comments
+        cleanup_time_str = os.getenv("CLEANUP_TIME", "02:00")
+        self.cleanup_time = cleanup_time_str.split('#')[0].strip()
+        
+        # Parse KEEP_DAYS with robust error handling for comments
+        keep_days_str = os.getenv("KEEP_DAYS", "90")
+        # Strip comments and whitespace
+        keep_days_str = keep_days_str.split('#')[0].strip()
+        self.keep_days = int(keep_days_str)
+        
+        self.scheduler = AsyncIOScheduler()
+        self.running = False
         self.calculator = None
         self.discord_notifier = None
-        self.scheduler = AsyncIOScheduler(timezone=pytz.timezone('US/Eastern'))
-        self.running = False
-        
-        # Configuration from environment
-        self.calculation_time = os.getenv("CALCULATION_TIME", "09:32")
-        self.cleanup_day = os.getenv("CLEANUP_DAY", "sunday").lower()
-        self.cleanup_time = os.getenv("CLEANUP_TIME", "02:00")
-        self.keep_days = int(os.getenv("KEEP_DAYS", "90"))
-        self.enable_scheduler = os.getenv("ENABLE_SCHEDULER", "true").lower() == "true"
         
         logger.info(f"Scheduler configuration:")
         logger.info(f"  - Daily calculation: {self.calculation_time} ET")
@@ -197,8 +210,13 @@ class SPXStraddleScheduler:
             return
         
         try:
-            # Parse calculation time
-            calc_hour, calc_minute = map(int, self.calculation_time.split(':'))
+            # Parse calculation time (supports HH:MM or HH:MM:SS format)
+            # Strip comments and whitespace
+            calc_time_clean = self.calculation_time.split('#')[0].strip()
+            time_parts = calc_time_clean.split(':')
+            calc_hour = int(time_parts[0])
+            calc_minute = int(time_parts[1])
+            calc_second = int(time_parts[2]) if len(time_parts) > 2 else 0
             
             # Daily calculation at specified time (weekdays only)
             self.scheduler.add_job(
@@ -206,6 +224,7 @@ class SPXStraddleScheduler:
                 CronTrigger(
                     hour=calc_hour,
                     minute=calc_minute,
+                    second=calc_second,
                     day_of_week='mon-fri',  # Monday to Friday
                     timezone='US/Eastern'
                 ),
@@ -215,8 +234,13 @@ class SPXStraddleScheduler:
                 coalesce=True
             )
             
-            # Parse cleanup time
-            cleanup_hour, cleanup_minute = map(int, self.cleanup_time.split(':'))
+            # Parse cleanup time (supports HH:MM or HH:MM:SS format)
+            # Strip comments and whitespace
+            cleanup_time_clean = self.cleanup_time.split('#')[0].strip()
+            cleanup_time_parts = cleanup_time_clean.split(':')
+            cleanup_hour = int(cleanup_time_parts[0])
+            cleanup_minute = int(cleanup_time_parts[1])
+            cleanup_second = int(cleanup_time_parts[2]) if len(cleanup_time_parts) > 2 else 0
             
             # Weekly cleanup
             cleanup_day_map = {
@@ -229,6 +253,7 @@ class SPXStraddleScheduler:
                 CronTrigger(
                     hour=cleanup_hour,
                     minute=cleanup_minute,
+                    second=cleanup_second,
                     day_of_week=cleanup_day_map.get(self.cleanup_day, 'sun'),
                     timezone='US/Eastern'
                 ),

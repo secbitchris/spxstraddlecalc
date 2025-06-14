@@ -573,8 +573,23 @@ class SPXStraddleCalculator:
             
             # Calculate percentiles
             def percentile(data, p):
-                index = int(len(data) * p / 100)
-                return data[min(index, len(data) - 1)]
+                """Calculate percentile using linear interpolation method"""
+                if not data:
+                    return 0
+                if len(data) == 1:
+                    return data[0]
+                
+                # Use the standard percentile calculation method
+                index = (len(data) - 1) * p / 100.0
+                lower_index = int(index)
+                upper_index = min(lower_index + 1, len(data) - 1)
+                
+                if lower_index == upper_index:
+                    return data[lower_index]
+                
+                # Linear interpolation
+                weight = index - lower_index
+                return data[lower_index] * (1 - weight) + data[upper_index] * weight
             
             p25 = percentile(sorted_costs, 25)
             p75 = percentile(sorted_costs, 75)
