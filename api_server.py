@@ -171,8 +171,8 @@ async def get_multi_timeframe_statistics():
         
         # Define timeframes (in days) - include daily granularity and YTD as dynamic timeframe
         daily_timeframes = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]
-        # Include all timeframes - let users decide what's useful based on actual data points
-        weekly_monthly_timeframes = [30, 45, 60, 90, 120, 180, 240, 360, 540, 720, 900]
+        # Include timeframes up to 2 years (720 days) - no need to go beyond our data range
+        weekly_monthly_timeframes = [30, 45, 60, 90, 120, 180, 240, 360, 540, 720]
         timeframes = daily_timeframes + weekly_monthly_timeframes
         
         # Add YTD if it's different from existing timeframes and reasonable
