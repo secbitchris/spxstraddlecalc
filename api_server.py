@@ -171,6 +171,7 @@ async def get_multi_timeframe_statistics():
         
         # Define timeframes (in days) - include daily granularity and YTD as dynamic timeframe
         daily_timeframes = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]
+        # Include all timeframes - let users decide what's useful based on actual data points
         weekly_monthly_timeframes = [30, 45, 60, 90, 120, 180, 240, 360, 540, 720, 900]
         timeframes = daily_timeframes + weekly_monthly_timeframes
         
@@ -202,29 +203,15 @@ async def get_multi_timeframe_statistics():
                         timeframe_key = f"{days}d"
                         timeframe_label = f"{days}d"
                     
-                    # Track data coverage
+                    # Track actual data points - no confusing "coverage" calculations
                     data_points = stats.get('data_points', 0)
-                    
-                    # Calculate coverage based on trading days, not calendar days
-                    # Markets are closed on weekends and holidays
-                    if days <= 7:
-                        # For short timeframes (≤1 week), use calendar days since weekends matter
-                        actual_days_in_range = days + 1  # Inclusive range
-                    else:
-                        # For longer timeframes, estimate trading days (≈5/7 of calendar days)
-                        calendar_days = days + 1  # Inclusive range
-                        estimated_trading_days = (calendar_days / 7) * 5  # ~5 trading days per week
-                        actual_days_in_range = estimated_trading_days
-                    
-                    coverage_pct = (data_points / actual_days_in_range) * 100 if actual_days_in_range > 0 else 0
                     
                     # Only include timeframes with sufficient data (5+ points)
                     results["timeframes"][timeframe_key] = {
                         "period_days": days,
                         "period_label": timeframe_label,
                         "is_ytd": days == ytd_days,
-                        "data_points": stats.get('data_points', 0),
-                        "coverage_percentage": round(coverage_pct, 1),
+                        "data_points": data_points,
                         "descriptive_stats": stats.get('descriptive_stats', {}),
                         "trend_analysis": stats.get('trend_analysis', {}),
                         "volatility_analysis": stats.get('volatility_analysis', {}),
@@ -240,11 +227,10 @@ async def get_multi_timeframe_statistics():
                     
                     results["summary"]["data_coverage"][timeframe_key] = {
                         "data_points": data_points,
-                        "possible_days": days,
-                        "coverage_percentage": round(coverage_pct, 1),
+                        "period_days": days,
                         "is_ytd": days == ytd_days
                     }
-                    
+            
             except Exception as e:
                 logger.warning(f"Failed to calculate {days}-day statistics: {e}")
                 continue
