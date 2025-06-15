@@ -203,15 +203,15 @@ async def get_multi_timeframe_statistics():
                         timeframe_key = f"{days}d"
                         timeframe_label = f"{days}d"
                     
-                    # Track actual data points - no confusing "coverage" calculations
-                    data_points = stats.get('data_points', 0)
+                    # Track actual valid market days - no confusing "coverage" calculations
+                    valid_market_days = stats.get('data_points', 0)
                     
-                    # Only include timeframes with sufficient data (5+ points)
+                    # Only include timeframes with sufficient data (5+ valid market days)
                     results["timeframes"][timeframe_key] = {
                         "period_days": days,
                         "period_label": timeframe_label,
                         "is_ytd": days == ytd_days,
-                        "data_points": data_points,
+                        "valid_market_days": valid_market_days,
                         "descriptive_stats": stats.get('descriptive_stats', {}),
                         "trend_analysis": stats.get('trend_analysis', {}),
                         "volatility_analysis": stats.get('volatility_analysis', {}),
@@ -226,7 +226,7 @@ async def get_multi_timeframe_statistics():
                     results["summary"]["available_timeframes"].append(days)
                     
                     results["summary"]["data_coverage"][timeframe_key] = {
-                        "data_points": data_points,
+                        "valid_market_days": valid_market_days,
                         "period_days": days,
                         "is_ytd": days == ytd_days
                     }
@@ -239,7 +239,7 @@ async def get_multi_timeframe_statistics():
         if results["timeframes"]:
             # Find timeframe with most data
             max_data_timeframe = max(results["timeframes"].keys(), 
-                                   key=lambda x: results["timeframes"][x]["data_points"])
+                                   key=lambda x: results["timeframes"][x]["valid_market_days"])
             
             results["summary"]["recommended_timeframe"] = max_data_timeframe
             results["summary"]["total_timeframes"] = len(results["timeframes"])
@@ -288,7 +288,7 @@ async def get_full_statistics_report():
         
         report = f"""# SPX 0DTE Straddle Complete Multi-Timeframe Analysis
 Generated: {timestamp}
-Total Historical Data: {summary.get('total_data_points', 'N/A')} trading days
+Total Historical Data: {summary.get('total_valid_market_days', 'N/A')} trading days
 
 ## Executive Summary
 This comprehensive analysis covers {len(timeframes)} timeframes from daily (1D) to long-term (900D) perspectives, providing insights into SPX 0DTE straddle cost volatility patterns across different time horizons.
@@ -303,7 +303,7 @@ This comprehensive analysis covers {len(timeframes)} timeframes from daily (1D) 
         for timeframe_key, tf_data in sorted_timeframes:
             period_label = tf_data.get('period_label', timeframe_key)
             period_days = tf_data.get('period_days', 0)
-            data_points = tf_data.get('data_points', 0)
+            valid_market_days = tf_data.get('valid_market_days', 0)
             coverage = tf_data.get('coverage_percentage', 0)
             
             # Descriptive stats
@@ -333,7 +333,7 @@ This comprehensive analysis covers {len(timeframes)} timeframes from daily (1D) 
             
             # Format section
             report += f"""### {period_label}
-**Data Coverage:** {data_points} data points
+**Data Coverage:** {valid_market_days} valid market days
 
 **Central Tendency:**
 - Mean: ${mean_cost:.2f}
@@ -418,7 +418,7 @@ This analysis is for educational and informational purposes only. Past performan
             "metadata": {
                 "timestamp": timestamp,
                 "timeframes_analyzed": len(timeframes),
-                "total_data_points": summary.get('total_data_points', 0),
+                "total_valid_market_days": summary.get('total_valid_market_days', 0),
                 "report_length": len(report)
             }
         }
@@ -908,7 +908,7 @@ async def get_spx_straddle_dashboard():
                             <thead>
                                 <tr>
                                     <th>Period</th>
-                                    <th>Data Points</th>
+                                    <th>Valid Market Days</th>
                                     <th>Average</th>
                                     <th>Range</th>
                                     <th>Trend</th>
@@ -923,7 +923,7 @@ async def get_spx_straddle_dashboard():
             
             for period_key, data in sorted_timeframes:
                 period_days = data['period_days']
-                data_points = data['data_points']
+                valid_market_days = data['valid_market_days']
                 coverage = summary.get('data_coverage', {}).get(period_key, {}).get('coverage_percentage', 0)
                 
                 desc_stats = data.get('descriptive_stats', {})
@@ -950,7 +950,7 @@ async def get_spx_straddle_dashboard():
                 html_content += f"""
                                 <tr>
                                     <td><strong>{period_name}</strong></td>
-                                    <td>{data_points}</td>
+                                    <td>{valid_market_days}</td>
                                     <td>${desc_stats.get('mean', 0):.2f}</td>
                                     <td>${desc_stats.get('min', 0):.2f} - ${desc_stats.get('max', 0):.2f}</td>
                                     <td>{trend_emoji} {trend.get('direction', 'Unknown').title()}</td>

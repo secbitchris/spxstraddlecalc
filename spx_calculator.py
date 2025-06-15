@@ -629,7 +629,8 @@ class SPXStraddleCalculator:
             return {
                 'status': 'success',
                 'period_days': days,
-                'data_points': len(straddle_costs),
+                'data_points': len(straddle_costs),  # Keep for backward compatibility
+            'valid_market_days': len(straddle_costs),
                 'descriptive_stats': {
                     'mean': round(mean_cost, 2),
                     'median': round(median_cost, 2),
