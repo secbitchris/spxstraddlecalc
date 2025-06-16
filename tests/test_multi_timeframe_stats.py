@@ -44,7 +44,7 @@ def test_multi_timeframe_endpoint():
             period_key = f"{period}d"
             if period_key in timeframes:
                 tf_data = timeframes[period_key]
-                data_points = tf_data['data_points']
+                data_points = tf_data['valid_market_days']
                 coverage = summary.get('data_coverage', {}).get(period_key, {}).get('coverage_percentage', 0)
                 trend = tf_data.get('trend_analysis', {}).get('direction', 'unknown')
                 avg_cost = tf_data.get('descriptive_stats', {}).get('mean', 0)

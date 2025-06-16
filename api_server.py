@@ -623,6 +623,11 @@ async def notify_discord_multi_timeframe(background_tasks: BackgroundTasks):
         logger.error(f"Error queuing multi-timeframe Discord notification: {e}")
         raise HTTPException(status_code=500, detail="Failed to queue multi-timeframe Discord notification")
 
+@app.get("/api/discord/notify/multi-timeframe")
+async def notify_discord_multi_timeframe_get(background_tasks: BackgroundTasks):
+    """Send multi-timeframe statistics to Discord (GET version for browser access)"""
+    return await notify_discord_multi_timeframe(background_tasks)
+
 @app.post("/api/discord/notify/daily-timeframes")
 async def notify_discord_daily_timeframes(background_tasks: BackgroundTasks):
     """Send daily timeframe statistics (1D-14D) to Discord"""
