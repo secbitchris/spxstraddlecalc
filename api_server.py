@@ -1082,13 +1082,25 @@ async def get_spy_multi_timeframe_statistics():
                 
                 if stats and 'expected_move' in stats:
                     expected_move_stats = stats['expected_move']
-                    results[f"{days}D"] = {
+                    result_entry = {
                         "mean": round(expected_move_stats['mean'], 2),
                         "std": round(expected_move_stats['std'], 2),
                         "min": round(expected_move_stats['min'], 2),
                         "max": round(expected_move_stats['max'], 2),
                         "data_points": stats['data_points']
                     }
+                    
+                    # Add implied volatility if available
+                    if 'implied_volatility' in stats:
+                        iv_stats = stats['implied_volatility']
+                        result_entry["implied_volatility"] = {
+                            "mean": round(iv_stats['mean'], 4),
+                            "std": round(iv_stats['std'], 4),
+                            "min": round(iv_stats['min'], 4),
+                            "max": round(iv_stats['max'], 4)
+                        }
+                    
+                    results[f"{days}D"] = result_entry
                     
             except Exception as e:
                 logger.warning(f"Failed to get SPY statistics for {days} days: {e}")
@@ -1747,476 +1759,109 @@ async def backfill_custom(
         raise HTTPException(status_code=500, detail="Failed to start backfill")
 
 @app.get("/api/dashboard", response_class=HTMLResponse)
-async def get_unified_dashboard():
-    """Unified dashboard for SPX straddle and SPY expected move data"""
-    try:
-        # Get SPX current data
-        spx_current_data = await calculator.get_spx_straddle_cost()
-        
-        # Get SPY current data
-        today = datetime.now().strftime('%Y-%m-%d')
-        spy_current_data = await spy_calculator.get_spy_data_for_date(today)
-        
-        # Get SPX multi-timeframe statistics
-        try:
-            spx_multi_stats_response = await get_multi_timeframe_statistics()
-            spx_multi_stats = spx_multi_stats_response if isinstance(spx_multi_stats_response, dict) else {}
-        except:
-            spx_multi_stats = {"status": "error"}
-        
-        # Get SPY multi-timeframe statistics
-        try:
-            spy_multi_stats_response = await get_spy_multi_timeframe_statistics()
-            spy_multi_stats = spy_multi_stats_response if isinstance(spy_multi_stats_response, dict) else {}
-        except:
-            spy_multi_stats = {"status": "error"}
-        
-        # Check if Discord is configured
-        discord_enabled = discord_notifier.is_enabled() if discord_notifier else False
-        
-        # Build HTML response with unified dashboard
-        html_content = f"""
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <title>Options Analytics Dashboard</title>
-            <meta charset="utf-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1">
-            <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-            <style>
-                body {{ 
-                    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; 
-                    margin: 0; 
-                    padding: 20px; 
-                    background-color: #f5f5f5;
-                }}
-                .container {{ max-width: 1400px; margin: 0 auto; }}
-                .header {{ text-align: center; margin-bottom: 30px; }}
-                .nav-links {{ text-align: center; margin-bottom: 20px; }}
-                .nav-links a {{ 
-                    display: inline-block; 
-                    margin: 0 10px; 
-                    padding: 8px 16px; 
-                    background: #007bff; 
-                    color: white; 
-                    text-decoration: none; 
-                    border-radius: 4px; 
-                    font-size: 0.9em;
-                }}
-                .nav-links a:hover {{ background: #0056b3; }}
-                .nav-links a.current {{ background: #28a745; }}
-                .asset-selector {{ 
-                    text-align: center; 
-                    margin-bottom: 30px; 
-                }}
-                .asset-dropdown {{ 
-                    padding: 12px 20px; 
-                    font-size: 16px; 
-                    border: 2px solid #007bff; 
-                    border-radius: 8px; 
-                    background: white; 
-                    color: #007bff;
-                    font-weight: bold;
-                    cursor: pointer;
-                    min-width: 250px;
-                }}
-                .asset-dropdown:focus {{ outline: none; border-color: #0056b3; }}
-                .card {{ 
-                    background: white; 
-                    border-radius: 8px; 
-                    padding: 20px; 
-                    margin: 15px 0; 
-                    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-                }}
-                .status-available {{ color: #28a745; font-weight: bold; }}
-                .status-error {{ color: #dc3545; font-weight: bold; }}
-                .status-calculating {{ color: #007bff; font-weight: bold; }}
-                .status-pending {{ color: #ffc107; font-weight: bold; }}
-                .status-no_data {{ color: #6c757d; font-weight: bold; }}
-                table {{ border-collapse: collapse; width: 100%; margin-top: 15px; }}
-                th, td {{ border: 1px solid #ddd; padding: 12px; text-align: left; }}
-                th {{ background-color: #f8f9fa; font-weight: 600; }}
-                .metric {{ display: inline-block; margin: 10px 20px 10px 0; }}
-                .metric-value {{ font-size: 1.5em; font-weight: bold; color: #007bff; }}
-                .metric-label {{ font-size: 0.9em; color: #666; }}
-                .grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; }}
-                .btn {{ 
-                    background: #007bff; 
-                    color: white; 
-                    padding: 10px 20px; 
-                    border: none; 
-                    border-radius: 4px; 
-                    cursor: pointer; 
-                    text-decoration: none;
-                    display: inline-block;
-                    margin: 5px;
-                }}
-                .btn:hover {{ background: #0056b3; }}
-                .btn-success {{ background: #28a745; }}
-                .btn-success:hover {{ background: #1e7e34; }}
-                .btn-spy {{ background: #17a2b8; }}
-                .btn-spy:hover {{ background: #138496; }}
-                .asset-content {{ display: none; }}
-                .asset-content.active {{ display: block; }}
-                .chart-container {{ position: relative; height: 400px; margin: 20px 0; }}
-                .chart-controls {{ margin: 20px 0; text-align: center; }}
-                .chart-controls select, .chart-controls button {{ 
-                    margin: 5px; 
-                    padding: 8px 12px; 
-                    border: 1px solid #ddd; 
-                    border-radius: 4px; 
-                }}
-                .fullscreen-btn {{ 
-                    background: #6f42c1; 
-                    color: white; 
-                    border: none; 
-                    padding: 8px 16px; 
-                    border-radius: 4px; 
-                    cursor: pointer; 
-                    margin: 5px;
-                }}
-                .fullscreen-btn:hover {{ background: #5a359a; }}
-            </style>
-        </head>
-        <body>
-            <div class="container">
-                <div class="header">
-                    <h1>📊 Options Analytics Dashboard</h1>
-                    <p>Real-time SPX straddle costs & SPY expected moves using Polygon.io</p>
-                </div>
-                
-                <div class="nav-links">
-                    <a href="/api/spx-straddle/dashboard">📈 SPX Dashboard</a>
-                    <a href="/api/spy-expected-move/dashboard">📊 SPY Dashboard</a>
-                    <a href="/api/dashboard" class="current">🔄 Unified View</a>
-                </div>
-                
-                <div class="asset-selector">
-                    <select id="assetDropdown" class="asset-dropdown" onchange="switchAsset()">
-                        <option value="SPX">SPX 0DTE Straddle Analysis</option>
-                        <option value="SPY">SPY Expected Move Analysis</option>
-                    </select>
-                </div>
-                
-                <!-- SPX Content -->
-                <div id="spx-content" class="asset-content active">
-                    <div class="card">
-                        <h2>🎯 SPX Current Status</h2>
-                        <p><strong>Status:</strong> <span class="status-{spx_current_data.get('calculation_status', 'unknown')}">{spx_current_data.get('calculation_status', 'Unknown').upper().replace('_', ' ')}</span></p>
-                        <p><strong>Last Update:</strong> {spx_current_data.get('timestamp', 'N/A')}</p>
-                        <p><strong>Discord Notifications:</strong> {'✅ Enabled' if discord_enabled else '❌ Disabled'}</p>
-        """
-        
-        # Add current SPX straddle data if available
-        if spx_current_data.get('calculation_status') == 'available':
-            html_content += f"""
-                        <div style="margin-top: 20px;">
-                            <div class="metric">
-                                <div class="metric-value">${spx_current_data.get('straddle_cost', 0):.2f}</div>
-                                <div class="metric-label">Straddle Cost</div>
-                            </div>
-                            <div class="metric">
-                                <div class="metric-value">${spx_current_data.get('spx_price_930am', 0):.2f}</div>
-                                <div class="metric-label">SPX @ 9:30 AM</div>
-                            </div>
-                            <div class="metric">
-                                <div class="metric-value">{spx_current_data.get('atm_strike', 0)}</div>
-                                <div class="metric-label">ATM Strike</div>
-                            </div>
-                            <div class="metric">
-                                <div class="metric-value">${spx_current_data.get('call_price_931am', 0):.2f}</div>
-                                <div class="metric-label">Call Price</div>
-                            </div>
-                            <div class="metric">
-                                <div class="metric-value">${spx_current_data.get('put_price_931am', 0):.2f}</div>
-                                <div class="metric-label">Put Price</div>
-                            </div>
-                        </div>
-            """
-        
-        html_content += """
-                        <div style="margin-top: 20px;">
-                            <a href="/api/spx-straddle/calculate" class="btn">🔄 Calculate Now</a>
-                            <a href="/api/discord/test" class="btn btn-success">🧪 Test Discord</a>
-                        </div>
-                    </div>
-                    
-                    <!-- SPX Charts -->
-                    <div class="card">
-                        <h2>📈 SPX Trend Analysis</h2>
-                        <div class="chart-controls">
-                            <select id="spx-time-period" onchange="updateSPXChart()">
-                                <option value="30">30 Days</option>
-                                <option value="90">3 Months</option>
-                                <option value="180">6 Months</option>
-                                <option value="365">1 Year</option>
-                                <option value="730" selected>2 Years</option>
-                            </select>
-                            <select id="spx-chart-type" onchange="updateSPXChart()">
-                                <option value="trend" selected>Trend Analysis</option>
-                                <option value="moving-averages">Moving Averages</option>
-                                <option value="comparison">Range Analysis</option>
-                            </select>
-                            <button class="fullscreen-btn" onclick="toggleFullscreen('spx-chart-container')">🔍 Fullscreen</button>
-                        </div>
-                        <div id="spx-chart-container" class="chart-container">
-                            <canvas id="spx-chart"></canvas>
-                        </div>
-                    </div>
-                </div>
-                
-                <!-- SPY Content -->
-                <div id="spy-content" class="asset-content">
-                    <div class="card">
-                        <h2>🎯 SPY Current Status</h2>
-        """
-        
-        # Add SPY current data
-        if spy_current_data:
-            html_content += f"""
-                        <p><strong>Status:</strong> <span class="status-available">DATA AVAILABLE</span></p>
-                        <p><strong>Last Update:</strong> {spy_current_data.get('timestamp', 'N/A')}</p>
-                        <p><strong>Timing:</strong> 9:30 AM (price) → 9:32 AM (straddle)</p>
-                        
-                        <div style="margin-top: 20px;">
-                            <div class="metric">
-                                <div class="metric-value">±${spy_current_data.get('expected_move_1sigma', 0):.2f}</div>
-                                <div class="metric-label">Expected Move (1σ)</div>
-                            </div>
-                            <div class="metric">
-                                <div class="metric-value">${spy_current_data.get('spy_price_930am', 0):.2f}</div>
-                                <div class="metric-label">SPY @ 9:30 AM</div>
-                            </div>
-                            <div class="metric">
-                                <div class="metric-value">{spy_current_data.get('atm_strike', 0)}</div>
-                                <div class="metric-label">ATM Strike</div>
-                            </div>
-                            <div class="metric">
-                                <div class="metric-value">${spy_current_data.get('straddle_cost', 0):.2f}</div>
-                                <div class="metric-label">Straddle Cost</div>
-                            </div>
-                            <div class="metric">
-                                <div class="metric-value">{spy_current_data.get('implied_volatility', 0):.1%}</div>
-                                <div class="metric-label">Implied Volatility</div>
-                            </div>
-                        </div>
-            """
-        else:
-            html_content += """
-                        <p><strong>Status:</strong> <span class="status-no_data">NO DATA AVAILABLE</span></p>
-                        <p><strong>Message:</strong> No SPY expected move data for today. Calculate to generate data.</p>
-            """
-        
-        html_content += """
-                        <div style="margin-top: 20px;">
-                            <a href="/api/spy-expected-move/calculate" class="btn btn-spy">🔄 Calculate SPY Move</a>
-                            <a href="/api/spy-expected-move/statistics/multi-timeframe" class="btn">📊 View Statistics</a>
-                        </div>
-                    </div>
-                    
-                    <!-- SPY Charts -->
-                    <div class="card">
-                        <h2>📈 SPY Expected Move Analysis</h2>
-                        <div class="chart-controls">
-                            <select id="spy-time-period" onchange="updateSPYChart()">
-                                <option value="30">30 Days</option>
-                                <option value="90">3 Months</option>
-                                <option value="180">6 Months</option>
-                                <option value="365">1 Year</option>
-                                <option value="730" selected>2 Years</option>
-                            </select>
-                            <select id="spy-chart-type" onchange="updateSPYChart()">
-                                <option value="trend" selected>Expected Move Trend</option>
-                                <option value="volatility">Implied Volatility</option>
-                                <option value="efficiency">Range Efficiency</option>
-                            </select>
-                            <button class="fullscreen-btn" onclick="toggleFullscreen('spy-chart-container')">🔍 Fullscreen</button>
-                        </div>
-                        <div id="spy-chart-container" class="chart-container">
-                            <canvas id="spy-chart"></canvas>
-                        </div>
-                    </div>
-                </div>
-        """
-        
-        # Close the HTML with JavaScript functions
-        html_content += """
-                
-                <script>
-                    let spxChart = null;
-                    let spyChart = null;
-                    
-                    // Asset switching functionality
-                    function switchAsset() {
-                        const dropdown = document.getElementById('assetDropdown');
-                        const selectedAsset = dropdown.value;
-                        
-                        // Hide all content divs
-                        document.querySelectorAll('.asset-content').forEach(div => {
-                            div.classList.remove('active');
-                        });
-                        
-                        // Show selected asset content
-                        const targetDiv = document.getElementById(selectedAsset.toLowerCase() + '-content');
-                        if (targetDiv) {
-                            targetDiv.classList.add('active');
-                        }
-                        
-                        // Load chart for selected asset
-                        if (selectedAsset === 'SPX') {
-                            setTimeout(updateSPXChart, 100);
-                        } else if (selectedAsset === 'SPY') {
-                            setTimeout(updateSPYChart, 100);
-                        }
-                    }
-                    
-                    // SPX Chart functionality
-                    async function updateSPXChart() {
-                        const days = document.getElementById('spx-time-period').value;
-                        const chartType = document.getElementById('spx-chart-type').value;
-                        
-                        try {
-                            const response = await fetch(`/api/spx-straddle/chart-config/${chartType}?days=${days}`);
-                            const config = await response.json();
-                            
-                            const ctx = document.getElementById('spx-chart').getContext('2d');
-                            
-                            if (spxChart) {
-                                spxChart.destroy();
-                            }
-                            
-                            spxChart = new Chart(ctx, config);
-                            
-                        } catch (error) {
-                            console.error('Error loading SPX chart:', error);
-                        }
-                    }
-                    
-                    // SPY Chart functionality
-                    async function updateSPYChart() {
-                        const days = document.getElementById('spy-time-period').value;
-                        const chartType = document.getElementById('spy-chart-type').value;
-                        
-                        try {
-                            const response = await fetch(`/api/spy-expected-move/chart-config/${chartType}?days=${days}`);
-                            const config = await response.json();
-                            
-                            const ctx = document.getElementById('spy-chart').getContext('2d');
-                            
-                            if (spyChart) {
-                                spyChart.destroy();
-                            }
-                            
-                            spyChart = new Chart(ctx, config);
-                            
-                        } catch (error) {
-                            console.error('Error loading SPY chart:', error);
-                        }
-                    }
-                    
-                    // Fullscreen functionality
-                    function toggleFullscreen(containerId) {
-                        const container = document.getElementById(containerId);
-                        
-                        if (!document.fullscreenElement) {
-                            container.requestFullscreen().then(() => {
-                                // Add fullscreen controls
-                                const controls = document.createElement('div');
-                                controls.id = 'fullscreen-controls';
-                                controls.style.cssText = `
-                                    position: fixed;
-                                    top: 20px;
-                                    right: 20px;
-                                    z-index: 9999;
-                                    background: rgba(0,0,0,0.8);
-                                    color: white;
-                                    padding: 10px;
-                                    border-radius: 8px;
-                                `;
-                                controls.innerHTML = `
-                                    <button onclick="exitFullscreen()" style="background: #dc3545; color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer;">
-                                        ✕ Exit Fullscreen (ESC)
-                                    </button>
-                                `;
-                                container.appendChild(controls);
-                                
-                                // Resize chart
-                                setTimeout(() => {
-                                    if (containerId.includes('spx') && spxChart) {
-                                        spxChart.resize();
-                                    } else if (containerId.includes('spy') && spyChart) {
-                                        spyChart.resize();
-                                    }
-                                }, 100);
-                            });
-                        } else {
-                            document.exitFullscreen();
-                        }
-                    }
-                    
-                    function exitFullscreen() {
-                        if (document.fullscreenElement) {
-                            document.exitFullscreen();
-                        }
-                    }
-                    
-                    // Handle ESC key for fullscreen exit
-                    document.addEventListener('keydown', (e) => {
-                        if (e.key === 'Escape' && document.fullscreenElement) {
-                            exitFullscreen();
-                        }
-                    });
-                    
-                    // Clean up fullscreen controls when exiting
-                    document.addEventListener('fullscreenchange', () => {
-                        if (!document.fullscreenElement) {
-                            const controls = document.getElementById('fullscreen-controls');
-                            if (controls) {
-                                controls.remove();
-                            }
-                            
-                            // Resize charts back to normal
-                            setTimeout(() => {
-                                if (spxChart) spxChart.resize();
-                                if (spyChart) spyChart.resize();
-                            }, 100);
-                        }
-                    });
-                    
-                    // Initialize charts on page load
-                    document.addEventListener('DOMContentLoaded', () => {
-                        // Load SPX chart by default (since SPX is selected by default)
-                        updateSPXChart();
-                    });
-                </script>
+async def get_dashboard_redirect():
+    """Dashboard redirect page - redirects to individual dashboards"""
+    return """
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Options Analytics Dashboard</title>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <style>
+            body { 
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; 
+                margin: 0; 
+                padding: 0; 
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                min-height: 100vh;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+            }
+            .container { 
+                background: rgba(255,255,255,0.95); 
+                padding: 40px; 
+                border-radius: 20px; 
+                box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+                text-align: center;
+                max-width: 600px;
+            }
+            h1 { 
+                color: #333; 
+                margin-bottom: 10px;
+                font-size: 2.5em;
+            }
+            p { 
+                color: #666; 
+                margin-bottom: 30px;
+                font-size: 1.2em;
+            }
+            .dashboard-links { 
+                display: flex; 
+                gap: 20px; 
+                justify-content: center;
+                flex-wrap: wrap;
+            }
+            .dashboard-link { 
+                display: block; 
+                padding: 20px 30px; 
+                color: white; 
+                text-decoration: none; 
+                border-radius: 12px; 
+                font-size: 1.1em;
+                font-weight: 600;
+                transition: all 0.3s ease;
+                box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+                min-width: 200px;
+            }
+            .spx-link { 
+                background: linear-gradient(135deg, #28a745, #20c997);
+            }
+            .spy-link { 
+                background: linear-gradient(135deg, #17a2b8, #007bff);
+            }
+            .dashboard-link:hover { 
+                transform: translateY(-5px);
+                box-shadow: 0 8px 25px rgba(0,0,0,0.3);
+            }
+            .description {
+                margin-top: 30px;
+                padding: 20px;
+                background: rgba(0,0,0,0.05);
+                border-radius: 10px;
+                font-size: 0.95em;
+                color: #555;
+            }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1>📊 Options Analytics</h1>
+            <p>Choose your analysis dashboard</p>
+            
+            <div class="dashboard-links">
+                <a href="/api/spx-straddle/dashboard" class="dashboard-link spx-link">
+                    📈 SPX 0DTE Straddle<br>
+                    <small>Real-time straddle costs & analysis</small>
+                </a>
+                <a href="/api/spy-expected-move/dashboard" class="dashboard-link spy-link">
+                    📊 SPY Expected Move<br>
+                    <small>Daily expected move calculations</small>
+                </a>
             </div>
-        </body>
-        </html>
-        """
-        
-        return html_content
-        
-    except Exception as e:
-        logger.error(f"Error generating unified dashboard: {e}")
-        return f"""
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <title>Dashboard Error</title>
-            <meta charset="utf-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1">
-        </head>
-        <body style="font-family: Arial, sans-serif; padding: 20px; background: #f5f5f5;">
-            <div style="background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
-                <h1 style="color: #dc3545;">❌ Dashboard Error</h1>
-                <p>An error occurred while loading the dashboard: {str(e)}</p>
-                <p><a href="/api/dashboard" style="color: #007bff;">🔄 Try Again</a></p>
+            
+            <div class="description">
+                <strong>SPX 0DTE Straddle:</strong> Track at-the-money straddle costs for SPX options expiring today.<br>
+                <strong>SPY Expected Move:</strong> Calculate expected price moves based on SPY option straddle costs.
             </div>
-        </body>
-        </html>
-        """
+        </div>
+    </body>
+    </html>
+    """
 
-# Original SPX Dashboard - restored functionality
+
+
 @app.get("/api/spx-straddle/dashboard", response_class=HTMLResponse)
 async def get_spx_straddle_dashboard():
     """Original SPX straddle dashboard - kept for compatibility"""
@@ -2335,7 +1980,6 @@ async def get_spx_straddle_dashboard():
                 <div class="nav-links">
                     <a href="/api/spx-straddle/dashboard" class="current">📈 SPX 0DTE Straddle</a>
                     <a href="/api/spy-expected-move/dashboard">📊 SPY Expected Move</a>
-                    <a href="/api/dashboard">🔄 Unified Dashboard</a>
                 </div>
                 
                 <div class="card">
@@ -2681,7 +2325,6 @@ async def get_spy_expected_move_dashboard():
                 <div class="nav-links">
                     <a href="/api/spx-straddle/dashboard">📈 SPX 0DTE Straddle</a>
                     <a href="/api/spy-expected-move/dashboard" class="current">📊 SPY Expected Move</a>
-                    <a href="/api/dashboard">🔄 Unified Dashboard</a>
                 </div>
                 
                 <div class="card">
@@ -2737,7 +2380,7 @@ async def get_spy_expected_move_dashboard():
         
         html_content += """
                     <div style="margin-top: 20px;">
-                        <a href="/api/spy-expected-move/calculate" class="btn btn-spy">🔄 Calculate SPY Move</a>
+                        <button onclick="calculateSpyMove()" class="btn btn-spy">🔄 Calculate SPY Move</button>
                         <a href="/api/discord/test" class="btn btn-success">🧪 Test Discord</a>
                     </div>
                 </div>
@@ -2838,13 +2481,21 @@ async def get_spy_expected_move_dashboard():
                 max_val = timeframe_data.get('max', 0.0)
                 data_points = timeframe_data.get('data_points', 0)
                 
+                # Extract implied volatility data if available
+                iv_data = timeframe_data.get('implied_volatility', {})
+                if iv_data and 'mean' in iv_data:
+                    iv_mean = iv_data['mean']
+                    iv_display = f"{iv_mean:.1%}"
+                else:
+                    iv_display = "N/A"
+                
                 html_content += f"""
                                 <tr>
                                     <td>{timeframe_key}</td>
                                     <td>±${mean_val:.2f}</td>
                                     <td>±${min_val:.2f}</td>
                                     <td>±${max_val:.2f}</td>
-                                    <td>0.0%</td>
+                                    <td>{iv_display}</td>
                                     <td>{data_points}</td>
                                     <td>➡️</td>
                                 </tr>
@@ -2862,6 +2513,31 @@ async def get_spy_expected_move_dashboard():
                 
                 <script>
                     let spyChart = null;
+                    
+                    // SPY Calculate functionality
+                    async function calculateSpyMove() {
+                        try {
+                            const response = await fetch('/api/spy-expected-move/calculate', {
+                                method: 'POST',
+                                headers: {
+                                    'Content-Type': 'application/json'
+                                }
+                            });
+                            
+                            if (response.ok) {
+                                const result = await response.json();
+                                alert(`SPY Expected Move calculated successfully!\\n\\nDate: ${result.date}\\nSPY Price (9:30 AM): $${result.spy_price_930am}\\nATM Strike: $${result.atm_strike}\\nStraddle Cost: $${result.straddle_cost}\\nExpected Move (1σ): ±$${result.expected_move_1sigma}\\nExpected Move (2σ): ±$${result.expected_move_2sigma}\\nImplied Volatility: ${(result.implied_volatility * 100).toFixed(1)}%`);
+                                // Refresh the page to show updated data
+                                window.location.reload();
+                            } else {
+                                const error = await response.text();
+                                alert(`Error calculating SPY expected move: ${error}`);
+                            }
+                        } catch (error) {
+                            console.error('Error:', error);
+                            alert(`Error calculating SPY expected move: ${error.message}`);
+                        }
+                    }
                     
                     // Chart update functionality
                     async function updateChart() {

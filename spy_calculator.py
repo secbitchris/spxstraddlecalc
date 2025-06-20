@@ -100,16 +100,16 @@ class SPYCalculator:
             
             logger.info(f"[SPY_EXPECTED_MOVE] Calculating expected move for {target_date}")
             
-            # Get SPY price at 9:30 AM
-            spy_price_930am = await self._get_spy_price_at_time(target_date, "09:30")
-            if not spy_price_930am:
-                logger.warning(f"[SPY_EXPECTED_MOVE] Could not get SPY price at 9:30 AM for {target_date}")
+            # Get SPY price at 9:32 AM for strike selection
+            spy_price_932am = await self._get_spy_price_at_time(target_date, "09:32")
+            if not spy_price_932am:
+                logger.warning(f"[SPY_EXPECTED_MOVE] Could not get SPY price at 9:32 AM for {target_date}")
                 return None
             
-            logger.info(f"[SPY_EXPECTED_MOVE] SPY price at 9:30 AM: ${spy_price_930am:.2f}")
+            logger.info(f"[SPY_EXPECTED_MOVE] SPY price at 9:32 AM: ${spy_price_932am:.2f}")
             
-            # Get straddle data at 9:32 AM (2 minutes after open for ORB analysis)
-            straddle_data = await self._get_spy_straddle_at_time(target_date, spy_price_930am, "09:32")
+            # Get straddle data at 9:32 AM using the same price for strike selection
+            straddle_data = await self._get_spy_straddle_at_time(target_date, spy_price_932am, "09:32")
             if not straddle_data:
                 logger.warning(f"[SPY_EXPECTED_MOVE] Could not get straddle data for {target_date}")
                 return None
@@ -119,7 +119,7 @@ class SPYCalculator:
             
             # Calculate expected move metrics
             metrics = self._calculate_expected_move_metrics(
-                spy_price_930am,
+                spy_price_932am,
                 straddle_data['call_price'],
                 straddle_data['put_price'],
                 straddle_data['atm_strike']
@@ -132,7 +132,7 @@ class SPYCalculator:
             spy_data = SPYMoveData(
                 asset="SPY",
                 date=target_date,
-                spy_price_930am=spy_price_930am,
+                spy_price_930am=spy_price_932am,
                 atm_strike=straddle_data['atm_strike'],
                 call_price_932am=straddle_data['call_price'],
                 put_price_932am=straddle_data['put_price'],
@@ -170,16 +170,16 @@ class SPYCalculator:
             
             logger.info(f"[SPY_EXPECTED_MOVE] Calculating historical expected move for {target_date_str}")
             
-            # Get SPY price at 9:30 AM
-            spy_price_930am = await self._get_spy_price_at_time(target_date_str, "09:30")
-            if not spy_price_930am:
-                logger.warning(f"[SPY_EXPECTED_MOVE] Could not get SPY price at 9:30 AM for {target_date_str}")
+            # Get SPY price at 9:32 AM for strike selection
+            spy_price_932am = await self._get_spy_price_at_time(target_date_str, "09:32")
+            if not spy_price_932am:
+                logger.warning(f"[SPY_EXPECTED_MOVE] Could not get SPY price at 9:32 AM for {target_date_str}")
                 return None
             
-            logger.info(f"[SPY_EXPECTED_MOVE] SPY price at 9:30 AM: ${spy_price_930am:.2f}")
+            logger.info(f"[SPY_EXPECTED_MOVE] SPY price at 9:32 AM: ${spy_price_932am:.2f}")
             
-            # Get straddle data at 9:32 AM (2 minutes after open for ORB analysis)
-            straddle_data = await self._get_spy_straddle_at_time(target_date_str, spy_price_930am, "09:32")
+            # Get straddle data at 9:32 AM using the same price for strike selection
+            straddle_data = await self._get_spy_straddle_at_time(target_date_str, spy_price_932am, "09:32")
             if not straddle_data:
                 logger.warning(f"[SPY_EXPECTED_MOVE] Could not get straddle data for {target_date_str}")
                 return None
@@ -189,7 +189,7 @@ class SPYCalculator:
             
             # Calculate expected move metrics
             metrics = self._calculate_expected_move_metrics(
-                spy_price_930am,
+                spy_price_932am,
                 straddle_data['call_price'],
                 straddle_data['put_price'],
                 straddle_data['atm_strike']
@@ -212,7 +212,7 @@ class SPYCalculator:
             spy_data = SPYMoveData(
                 asset="SPY",
                 date=target_date_str,
-                spy_price_930am=spy_price_930am,
+                spy_price_930am=spy_price_932am,
                 atm_strike=straddle_data['atm_strike'],
                 call_price_932am=straddle_data['call_price'],
                 put_price_932am=straddle_data['put_price'],
@@ -396,8 +396,8 @@ class SPYCalculator:
     async def _get_spy_straddle_at_time(self, date: str, spy_price: float, time: str) -> Optional[Dict]:
         """Get SPY straddle prices at specific time (e.g., 9:32 AM)"""
         try:
-            # Determine ATM strike (round to nearest $5 for SPY)
-            atm_strike = round(spy_price / 5) * 5
+            # Determine ATM strike (round to nearest $1 for SPY)
+            atm_strike = round(spy_price)
             
             # Get options data for the ATM strike
             # For 0DTE, expiration date is the same as trade date
@@ -502,19 +502,23 @@ class SPYCalculator:
         expected_move_2sigma = straddle_cost * 2
         
         # Calculate implied volatility (reverse-engineered from straddle)
-        # IV ≈ straddle_cost / (spy_price × √(T/252))
-        # For 0DTE: T = 1/252 (fraction of trading day remaining)
-        time_to_expiry = 1/252  # Approximate for 0DTE
-        implied_volatility = straddle_cost / (spy_price * math.sqrt(time_to_expiry))
+        # For 0DTE at 9:32 AM, approximately 6.47 hours remaining until 4 PM close
+        # Time to expiry as fraction of year: (6.47 hours / 6.5 hours per day) / 252 trading days
+        time_to_expiry_years = (6.47 / 6.5) / 252  # About 0.004 years remaining
         
-        # Annualize the IV
-        implied_volatility_annualized = implied_volatility * math.sqrt(252)
+        # Standard Black-Scholes approximation for ATM straddle:
+        # Straddle ≈ 0.8 × Stock × IV × √T
+        # Solving for IV: IV = Straddle / (0.8 × Stock × √T)
+        if time_to_expiry_years > 0:
+            implied_volatility = straddle_cost / (0.8 * spy_price * math.sqrt(time_to_expiry_years))
+        else:
+            implied_volatility = 0
         
         return {
             'straddle_cost': straddle_cost,
             'expected_move_1sigma': expected_move_1sigma,
             'expected_move_2sigma': expected_move_2sigma,
-            'implied_volatility': implied_volatility_annualized
+            'implied_volatility': implied_volatility
         }
     
     async def _calculate_range_efficiency(self, target_date: str) -> Optional[float]:
