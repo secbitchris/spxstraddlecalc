@@ -6,7 +6,7 @@ import json
 import io
 import csv
 import logging
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 import pytz
 from spx_calculator import SPXStraddleCalculator
 from spy_calculator import SPYCalculator
@@ -1081,11 +1081,12 @@ async def get_spy_multi_timeframe_statistics():
                 stats = await spy_calculator.calculate_spy_statistics(days)
                 
                 if stats and 'expected_move' in stats:
+                    expected_move_stats = stats['expected_move']
                     results[f"{days}D"] = {
-                        "mean": round(stats['expected_move']['mean'], 2),
-                        "std": round(stats['expected_move']['std'], 2),
-                        "min": round(stats['expected_move']['min'], 2),
-                        "max": round(stats['expected_move']['max'], 2),
+                        "mean": round(expected_move_stats['mean'], 2),
+                        "std": round(expected_move_stats['std'], 2),
+                        "min": round(expected_move_stats['min'], 2),
+                        "max": round(expected_move_stats['max'], 2),
                         "data_points": stats['data_points']
                     }
                     
@@ -1791,6 +1792,19 @@ async def get_unified_dashboard():
                 }}
                 .container {{ max-width: 1400px; margin: 0 auto; }}
                 .header {{ text-align: center; margin-bottom: 30px; }}
+                .nav-links {{ text-align: center; margin-bottom: 20px; }}
+                .nav-links a {{ 
+                    display: inline-block; 
+                    margin: 0 10px; 
+                    padding: 8px 16px; 
+                    background: #007bff; 
+                    color: white; 
+                    text-decoration: none; 
+                    border-radius: 4px; 
+                    font-size: 0.9em;
+                }}
+                .nav-links a:hover {{ background: #0056b3; }}
+                .nav-links a.current {{ background: #28a745; }}
                 .asset-selector {{ 
                     text-align: center; 
                     margin-bottom: 30px; 
@@ -1869,6 +1883,12 @@ async def get_unified_dashboard():
                 <div class="header">
                     <h1>📊 Options Analytics Dashboard</h1>
                     <p>Real-time SPX straddle costs & SPY expected moves using Polygon.io</p>
+                </div>
+                
+                <div class="nav-links">
+                    <a href="/api/spx-straddle/dashboard">📈 SPX Dashboard</a>
+                    <a href="/api/spy-expected-move/dashboard">📊 SPY Dashboard</a>
+                    <a href="/api/dashboard" class="current">🔄 Unified View</a>
                 </div>
                 
                 <div class="asset-selector">
@@ -2239,6 +2259,19 @@ async def get_spx_straddle_dashboard():
                 }}
                 .container {{ max-width: 1400px; margin: 0 auto; }}
                 .header {{ text-align: center; margin-bottom: 30px; }}
+                .nav-links {{ text-align: center; margin-bottom: 20px; }}
+                .nav-links a {{ 
+                    display: inline-block; 
+                    margin: 0 10px; 
+                    padding: 8px 16px; 
+                    background: #007bff; 
+                    color: white; 
+                    text-decoration: none; 
+                    border-radius: 4px; 
+                    font-size: 0.9em;
+                }}
+                .nav-links a:hover {{ background: #0056b3; }}
+                .nav-links a.current {{ background: #28a745; }}
                 .card {{ 
                     background: white; 
                     border-radius: 8px; 
@@ -2297,7 +2330,12 @@ async def get_spx_straddle_dashboard():
                 <div class="header">
                     <h1>📊 SPX 0DTE Straddle Dashboard</h1>
                     <p>Real-time straddle costs using Polygon.io</p>
-                    <p><a href="/api/dashboard" style="color: #007bff; text-decoration: none;">🔄 Try New Unified Dashboard (SPX + SPY)</a></p>
+                </div>
+                
+                <div class="nav-links">
+                    <a href="/api/spx-straddle/dashboard" class="current">📈 SPX 0DTE Straddle</a>
+                    <a href="/api/spy-expected-move/dashboard">📊 SPY Expected Move</a>
+                    <a href="/api/dashboard">🔄 Unified Dashboard</a>
                 </div>
                 
                 <div class="card">
@@ -2340,6 +2378,37 @@ async def get_spx_straddle_dashboard():
                         <a href="/api/spx-straddle/calculate" class="btn">🔄 Calculate Now</a>
                         <a href="/api/discord/test" class="btn btn-success">🧪 Test Discord</a>
                     </div>
+                </div>
+                
+                <!-- Historical Data Backfill -->
+                <div class="card">
+                    <h2>📚 Historical Data Backfill</h2>
+                    <p>Populate your database with historical SPX 0DTE straddle costs for better analysis and trending.</p>
+                    
+                    <div style="margin: 20px 0;">
+                        <h4>Quick Scenarios</h4>
+                        <div style="display: flex; flex-wrap: wrap; gap: 10px; margin: 15px 0;">
+                            <button class="btn" onclick="runBackfill('1week')">📅 1 Week</button>
+                            <button class="btn" onclick="runBackfill('1month')">📅 1 Month</button>
+                            <button class="btn" onclick="runBackfill('3months')">📅 3 Months</button>
+                            <button class="btn" onclick="runBackfill('6months')">📅 6 Months</button>
+                            <button class="btn" onclick="runBackfill('1year')">📅 1 Year</button>
+                            <button class="btn" onclick="runBackfill('2years')">📅 2 Years</button>
+                        </div>
+                    </div>
+                    
+                    <div style="margin: 20px 0;">
+                        <h4>Custom Date Range</h4>
+                        <div style="display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 15px 0;">
+                            <label>Start Date:</label>
+                            <input type="date" id="backfill-start-date" style="padding: 8px; border: 1px solid #ddd; border-radius: 4px;">
+                            <label>End Date:</label>
+                            <input type="date" id="backfill-end-date" style="padding: 8px; border: 1px solid #ddd; border-radius: 4px;">
+                            <button class="btn" onclick="runCustomBackfill()">🚀 Start Custom Backfill</button>
+                        </div>
+                    </div>
+                    
+                    <div id="backfill-status" style="margin-top: 15px; padding: 10px; border-radius: 4px; display: none;"></div>
                 </div>
                 
                 <!-- Charts -->
@@ -2491,6 +2560,863 @@ async def get_spx_straddle_dashboard():
             content=f"<html><body><h1>Error</h1><p>Failed to load dashboard: {str(e)}</p></body></html>",
             status_code=500
         )
+
+@app.get("/api/spy-expected-move/dashboard", response_class=HTMLResponse)
+async def get_spy_expected_move_dashboard():
+    """Dedicated SPY expected move dashboard - matches SPX dashboard structure"""
+    try:
+        # Get current SPY data
+        today = datetime.now().strftime('%Y-%m-%d')
+        current_data = await spy_calculator.get_spy_data_for_date(today)
+        
+        if not current_data:
+            current_data = {"calculation_status": "no_data", "message": "No SPY expected move data available. Use calculate to generate data."}
+        
+        # Get multi-timeframe statistics
+        try:
+            multi_stats = await get_spy_multi_timeframe_statistics()
+            if not isinstance(multi_stats, dict):
+                multi_stats = {"status": "error", "message": "Invalid response format"}
+        except Exception as e:
+            logger.error(f"Error getting SPY multi-timeframe statistics: {e}")
+            multi_stats = {"status": "error", "message": str(e)}
+        
+        # Check if Discord is configured
+        discord_enabled = discord_notifier.is_enabled() if discord_notifier else False
+        
+        # Build HTML response
+        html_content = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>SPY Expected Move Dashboard</title>
+            <meta charset="utf-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1">
+            <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+            <style>
+                body {{ 
+                    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; 
+                    margin: 0; 
+                    padding: 20px; 
+                    background-color: #f5f5f5;
+                }}
+                .container {{ max-width: 1400px; margin: 0 auto; }}
+                .header {{ text-align: center; margin-bottom: 30px; }}
+                .nav-links {{ text-align: center; margin-bottom: 20px; }}
+                .nav-links a {{ 
+                    display: inline-block; 
+                    margin: 0 10px; 
+                    padding: 8px 16px; 
+                    background: #007bff; 
+                    color: white; 
+                    text-decoration: none; 
+                    border-radius: 4px; 
+                    font-size: 0.9em;
+                }}
+                .nav-links a:hover {{ background: #0056b3; }}
+                .nav-links a.current {{ background: #28a745; }}
+                .card {{ 
+                    background: white; 
+                    border-radius: 8px; 
+                    padding: 20px; 
+                    margin: 15px 0; 
+                    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+                }}
+                .status-available {{ color: #28a745; font-weight: bold; }}
+                .status-error {{ color: #dc3545; font-weight: bold; }}
+                .status-calculating {{ color: #007bff; font-weight: bold; }}
+                .status-pending {{ color: #ffc107; font-weight: bold; }}
+                .status-pending_calculation {{ color: #ffc107; font-weight: bold; }}
+                .status-no_data {{ color: #6c757d; font-weight: bold; }}
+                .btn {{ 
+                    background: #007bff; 
+                    color: white; 
+                    padding: 10px 20px; 
+                    border: none; 
+                    border-radius: 4px; 
+                    cursor: pointer; 
+                    text-decoration: none;
+                    display: inline-block;
+                    margin: 5px;
+                }}
+                .btn:hover {{ background: #0056b3; }}
+                .btn-success {{ background: #28a745; }}
+                .btn-success:hover {{ background: #1e7e34; }}
+                .btn-spy {{ background: #6f42c1; }}
+                .btn-spy:hover {{ background: #5a359a; }}
+                .metric {{ display: inline-block; margin: 10px 20px 10px 0; }}
+                .metric-value {{ font-size: 1.5em; font-weight: bold; color: #6f42c1; }}
+                .metric-label {{ font-size: 0.9em; color: #666; }}
+                .chart-container {{ position: relative; height: 400px; margin: 20px 0; }}
+                .chart-controls {{ margin: 20px 0; text-align: center; }}
+                .chart-controls select, .chart-controls button {{ 
+                    margin: 5px; 
+                    padding: 8px 12px; 
+                    border: 1px solid #ddd; 
+                    border-radius: 4px; 
+                }}
+                .fullscreen-btn {{ 
+                    background: #6f42c1; 
+                    color: white; 
+                    border: none; 
+                    padding: 8px 16px; 
+                    border-radius: 4px; 
+                    cursor: pointer; 
+                    margin: 5px;
+                }}
+                .fullscreen-btn:hover {{ background: #5a359a; }}
+                table {{ border-collapse: collapse; width: 100%; margin-top: 15px; }}
+                th, td {{ border: 1px solid #ddd; padding: 12px; text-align: left; }}
+                th {{ background-color: #f8f9fa; font-weight: 600; }}
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <div class="header">
+                    <h1>📊 SPY Expected Move Dashboard</h1>
+                    <p>Expected moves using implied volatility from straddle pricing</p>
+                    <p><strong>Timing:</strong> 9:30 AM (price) → 9:32 AM (straddle) for post-ORB analysis</p>
+                </div>
+                
+                <div class="nav-links">
+                    <a href="/api/spx-straddle/dashboard">📈 SPX 0DTE Straddle</a>
+                    <a href="/api/spy-expected-move/dashboard" class="current">📊 SPY Expected Move</a>
+                    <a href="/api/dashboard">🔄 Unified Dashboard</a>
+                </div>
+                
+                <div class="card">
+                    <h2>🎯 SPY Current Status</h2>
+        """
+        
+        # Add current SPY data
+        if current_data and current_data.get('expected_move_1sigma'):
+            html_content += f"""
+                    <p><strong>Status:</strong> <span class="status-available">DATA AVAILABLE</span></p>
+                    <p><strong>Last Update:</strong> {current_data.get('timestamp', 'N/A')}</p>
+                    <p><strong>Date:</strong> {current_data.get('date', 'N/A')}</p>
+                    
+                    <div style="margin-top: 20px;">
+                        <div class="metric">
+                            <div class="metric-value">±${current_data.get('expected_move_1sigma', 0):.2f}</div>
+                            <div class="metric-label">Expected Move (1σ)</div>
+                        </div>
+                        <div class="metric">
+                            <div class="metric-value">±${current_data.get('expected_move_2sigma', 0):.2f}</div>
+                            <div class="metric-label">Expected Move (2σ)</div>
+                        </div>
+                        <div class="metric">
+                            <div class="metric-value">${current_data.get('spy_price_930am', 0):.2f}</div>
+                            <div class="metric-label">SPY @ 9:30 AM</div>
+                        </div>
+                        <div class="metric">
+                            <div class="metric-value">{current_data.get('atm_strike', 0)}</div>
+                            <div class="metric-label">ATM Strike</div>
+                        </div>
+                        <div class="metric">
+                            <div class="metric-value">${current_data.get('straddle_cost', 0):.2f}</div>
+                            <div class="metric-label">Straddle Cost</div>
+                        </div>
+                        <div class="metric">
+                            <div class="metric-value">{current_data.get('implied_volatility', 0):.1%}</div>
+                            <div class="metric-label">Implied Volatility</div>
+                        </div>
+                    </div>
+                    
+                    <div style="margin-top: 20px; padding: 15px; background: #e7f3ff; border-radius: 4px;">
+                        <h4 style="margin: 0 0 10px 0; color: #0066cc;">ORB Analysis</h4>
+                        <p style="margin: 5px 0;"><strong>Opening Range (9:30-9:32):</strong> ${current_data.get('orb_low', 0):.2f} - ${current_data.get('orb_high', 0):.2f}</p>
+                        <p style="margin: 5px 0;"><strong>Range Size:</strong> ${current_data.get('orb_range', 0):.2f}</p>
+                        <p style="margin: 5px 0;"><strong>Range Efficiency:</strong> {current_data.get('range_efficiency', 0):.1%}</p>
+                    </div>
+            """
+        else:
+            html_content += f"""
+                    <p><strong>Status:</strong> <span class="status-no_data">NO DATA AVAILABLE</span></p>
+                    <p><strong>Message:</strong> {current_data.get('message', 'No SPY expected move data for today. Calculate to generate data.')}</p>
+            """
+        
+        html_content += """
+                    <div style="margin-top: 20px;">
+                        <a href="/api/spy-expected-move/calculate" class="btn btn-spy">🔄 Calculate SPY Move</a>
+                        <a href="/api/discord/test" class="btn btn-success">🧪 Test Discord</a>
+                    </div>
+                </div>
+                
+                <!-- Historical Data Backfill -->
+                <div class="card">
+                    <h2>📚 Historical Data Backfill</h2>
+                    <p>Populate your database with historical SPY expected move data for comprehensive analysis and trending.</p>
+                    
+                    <div style="margin: 15px 0; padding: 12px; background: #fff3cd; border: 1px solid #ffeaa7; border-radius: 4px;">
+                        <strong>⚠️ Important:</strong> SPY daily 0DTE options only became available in 2022. 
+                        Historical data is limited to <strong>January 1, 2023</strong> onwards for reliable analysis.
+                    </div>
+                    
+                    <div style="margin: 20px 0;">
+                        <h4>Quick Scenarios</h4>
+                        <div style="display: flex; flex-wrap: wrap; gap: 10px; margin: 15px 0;">
+                            <button class="btn btn-spy" onclick="runSpyBackfill('1week')">📅 1 Week</button>
+                            <button class="btn btn-spy" onclick="runSpyBackfill('1month')">📅 1 Month</button>
+                            <button class="btn btn-spy" onclick="runSpyBackfill('3months')">📅 3 Months</button>
+                            <button class="btn btn-spy" onclick="runSpyBackfill('6months')">📅 6 Months</button>
+                            <button class="btn btn-spy" onclick="runSpyBackfill('1year')">📅 1 Year</button>
+                            <button class="btn btn-spy" onclick="runSpyBackfill('max')">📅 Max Available</button>
+                        </div>
+                    </div>
+                    
+                    <div style="margin: 20px 0;">
+                        <h4>Custom Date Range</h4>
+                        <div style="display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 15px 0;">
+                            <label>Start Date:</label>
+                            <input type="date" id="spy-backfill-start-date" min="2023-01-01" style="padding: 8px; border: 1px solid #ddd; border-radius: 4px;">
+                            <label>End Date:</label>
+                            <input type="date" id="spy-backfill-end-date" min="2023-01-01" style="padding: 8px; border: 1px solid #ddd; border-radius: 4px;">
+                            <button class="btn btn-spy" onclick="runCustomSpyBackfill()">🚀 Start Custom Backfill</button>
+                        </div>
+                        <p style="font-size: 0.9em; color: #666; margin: 5px 0;">
+                            <em>Minimum date: January 1, 2023 (SPY 0DTE launch)</em>
+                        </p>
+                    </div>
+                    
+                    <div id="spy-backfill-status" style="margin-top: 15px; padding: 10px; border-radius: 4px; display: none;"></div>
+                </div>
+                
+                <!-- Charts -->
+                <div class="card">
+                    <h2>📈 SPY Expected Move Analysis</h2>
+                    <div class="chart-controls">
+                        <select id="time-period" onchange="updateChart()">
+                            <option value="30">30 Days</option>
+                            <option value="90">3 Months</option>
+                            <option value="180">6 Months</option>
+                            <option value="365">1 Year</option>
+                            <option value="730" selected>2 Years</option>
+                        </select>
+                        <select id="chart-type" onchange="updateChart()">
+                            <option value="trend" selected>Expected Move Trend</option>
+                            <option value="volatility">Implied Volatility</option>
+                            <option value="efficiency">Range Efficiency</option>
+                        </select>
+                        <button class="fullscreen-btn" onclick="toggleFullscreen('chart-container')">🔍 Fullscreen</button>
+                    </div>
+                    <div id="chart-container" class="chart-container">
+                        <canvas id="spyChart"></canvas>
+                    </div>
+                    <div id="chart-status" style="text-align: center; margin-top: 10px; padding: 10px; border-radius: 4px;"></div>
+                </div>
+        """
+        
+        # Add multi-timeframe statistics if available
+        if multi_stats.get("status") == "success":
+            html_content += """
+                <div class="card">
+                    <h2>📊 Multi-Timeframe Statistics</h2>
+                    <div style="overflow-x: auto;">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Timeframe</th>
+                                    <th>Avg Expected Move</th>
+                                    <th>Min Expected Move</th>
+                                    <th>Max Expected Move</th>
+                                    <th>Avg IV</th>
+                                    <th>Count</th>
+                                    <th>Trend</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+            """
+            
+            # Process each timeframe and display statistics
+            timeframes = multi_stats.get("timeframes", {})
+            for timeframe_key in sorted(timeframes.keys(), key=lambda x: int(x.replace('D', ''))):
+                timeframe_data = timeframes[timeframe_key]
+                
+                # Extract values with proper error handling
+                mean_val = timeframe_data.get('mean', 0.0)
+                min_val = timeframe_data.get('min', 0.0)
+                max_val = timeframe_data.get('max', 0.0)
+                data_points = timeframe_data.get('data_points', 0)
+                
+                html_content += f"""
+                                <tr>
+                                    <td>{timeframe_key}</td>
+                                    <td>±${mean_val:.2f}</td>
+                                    <td>±${min_val:.2f}</td>
+                                    <td>±${max_val:.2f}</td>
+                                    <td>0.0%</td>
+                                    <td>{data_points}</td>
+                                    <td>➡️</td>
+                                </tr>
+                """
+            
+            html_content += """
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            """
+        
+        # Close the HTML with JavaScript functions
+        html_content += """
+                
+                <script>
+                    let spyChart = null;
+                    
+                    // Chart update functionality
+                    async function updateChart() {
+                        const days = document.getElementById('time-period').value;
+                        const chartType = document.getElementById('chart-type').value;
+                        const statusDiv = document.getElementById('chart-status');
+                        
+                        statusDiv.innerHTML = '<div style="color: #007bff;">📊 Loading chart data...</div>';
+                        
+                        try {
+                            const response = await fetch(`/api/spy-expected-move/chart-config/${chartType}?days=${days}`);
+                            
+                            if (!response.ok) {
+                                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                            }
+                            
+                            const config = await response.json();
+                            
+                            const ctx = document.getElementById('spyChart').getContext('2d');
+                            
+                            if (spyChart) {
+                                spyChart.destroy();
+                            }
+                            
+                            spyChart = new Chart(ctx, config);
+                            statusDiv.innerHTML = '';
+                            
+                        } catch (error) {
+                            console.error('Error loading SPY chart:', error);
+                            statusDiv.innerHTML = `<div style="color: #dc3545; background: #f8d7da; padding: 10px; border-radius: 4px;">❌ Error loading chart: ${error.message}</div>`;
+                        }
+                    }
+                    
+                    // Fullscreen functionality
+                    function toggleFullscreen(containerId) {
+                        const container = document.getElementById(containerId);
+                        
+                        if (!document.fullscreenElement) {
+                            container.requestFullscreen().then(() => {
+                                // Add fullscreen controls
+                                const controls = document.createElement('div');
+                                controls.id = 'fullscreen-controls';
+                                controls.style.cssText = `
+                                    position: fixed;
+                                    top: 20px;
+                                    right: 20px;
+                                    z-index: 9999;
+                                    background: rgba(0,0,0,0.8);
+                                    color: white;
+                                    padding: 10px;
+                                    border-radius: 8px;
+                                `;
+                                controls.innerHTML = `
+                                    <button onclick="exitFullscreen()" style="background: #dc3545; color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer;">
+                                        ✕ Exit Fullscreen (ESC)
+                                    </button>
+                                `;
+                                container.appendChild(controls);
+                                
+                                // Resize chart
+                                setTimeout(() => {
+                                    if (spyChart) {
+                                        spyChart.resize();
+                                    }
+                                }, 100);
+                            });
+                        } else {
+                            document.exitFullscreen();
+                        }
+                    }
+                    
+                    function exitFullscreen() {
+                        if (document.fullscreenElement) {
+                            document.exitFullscreen();
+                        }
+                    }
+                    
+                    // Handle ESC key for fullscreen exit
+                    document.addEventListener('keydown', (e) => {
+                        if (e.key === 'Escape' && document.fullscreenElement) {
+                            exitFullscreen();
+                        }
+                    });
+                    
+                    // Clean up fullscreen controls when exiting
+                    document.addEventListener('fullscreenchange', () => {
+                        if (!document.fullscreenElement) {
+                            const controls = document.getElementById('fullscreen-controls');
+                            if (controls) {
+                                controls.remove();
+                            }
+                            
+                            // Resize chart back to normal
+                            setTimeout(() => {
+                                if (spyChart) spyChart.resize();
+                            }, 100);
+                        }
+                    });
+                    
+                    // Initialize chart on page load
+                    document.addEventListener('DOMContentLoaded', () => {
+                        updateChart();
+                    });
+                    
+                    // Backfill functionality
+                    async function runBackfill(scenario) {
+                        const statusDiv = document.getElementById('backfill-status');
+                        statusDiv.style.display = 'block';
+                        statusDiv.innerHTML = `<div style="color: #007bff; background: #e7f3ff; padding: 10px; border-radius: 4px;">🔄 Starting ${scenario} backfill...</div>`;
+                        
+                        try {
+                            const response = await fetch(`/api/spx-straddle/backfill/scenario/${scenario}`, {
+                                method: 'POST'
+                            });
+                            
+                            if (response.ok) {
+                                const result = await response.json();
+                                statusDiv.innerHTML = `<div style="color: #28a745; background: #d4edda; padding: 10px; border-radius: 4px;">✅ ${scenario} backfill started successfully! Check logs for progress.</div>`;
+                            } else {
+                                const error = await response.json();
+                                statusDiv.innerHTML = `<div style="color: #dc3545; background: #f8d7da; padding: 10px; border-radius: 4px;">❌ Error: ${error.detail}</div>`;
+                            }
+                        } catch (error) {
+                            statusDiv.innerHTML = `<div style="color: #dc3545; background: #f8d7da; padding: 10px; border-radius: 4px;">❌ Network error: ${error.message}</div>`;
+                        }
+                    }
+                    
+                    async function runCustomBackfill() {
+                        const startDate = document.getElementById('backfill-start-date').value;
+                        const endDate = document.getElementById('backfill-end-date').value;
+                        const statusDiv = document.getElementById('backfill-status');
+                        
+                        if (!startDate) {
+                            statusDiv.style.display = 'block';
+                            statusDiv.innerHTML = `<div style="color: #dc3545; background: #f8d7da; padding: 10px; border-radius: 4px;">❌ Please select a start date</div>`;
+                            return;
+                        }
+                        
+                        statusDiv.style.display = 'block';
+                        statusDiv.innerHTML = `<div style="color: #007bff; background: #e7f3ff; padding: 10px; border-radius: 4px;">🔄 Starting custom backfill from ${startDate}${endDate ? ' to ' + endDate : ''}...</div>`;
+                        
+                        try {
+                            let url = `/api/spx-straddle/backfill/custom?start_date=${startDate}`;
+                            if (endDate) {
+                                url += `&end_date=${endDate}`;
+                            }
+                            
+                            const response = await fetch(url, {
+                                method: 'POST'
+                            });
+                            
+                            if (response.ok) {
+                                const result = await response.json();
+                                statusDiv.innerHTML = `<div style="color: #28a745; background: #d4edda; padding: 10px; border-radius: 4px;">✅ Custom backfill started successfully! Check logs for progress.</div>`;
+                            } else {
+                                const error = await response.json();
+                                statusDiv.innerHTML = `<div style="color: #dc3545; background: #f8d7da; padding: 10px; border-radius: 4px;">❌ Error: ${error.detail}</div>`;
+                            }
+                        } catch (error) {
+                            statusDiv.innerHTML = `<div style="color: #dc3545; background: #f8d7da; padding: 10px; border-radius: 4px;">❌ Network error: ${error.message}</div>`;
+                        }
+                    }
+                    
+                    // SPY Backfill functionality
+                    async function runSpyBackfill(scenario) {
+                        const statusDiv = document.getElementById('spy-backfill-status');
+                        statusDiv.style.display = 'block';
+                        statusDiv.innerHTML = `<div style="color: #6f42c1; background: #f3e5f5; padding: 10px; border-radius: 4px;">🔄 Starting SPY ${scenario} backfill...</div>`;
+                        
+                        try {
+                            const response = await fetch(`/api/spy-expected-move/backfill/scenario/${scenario}`, {
+                                method: 'POST'
+                            });
+                            
+                            if (response.ok) {
+                                const result = await response.json();
+                                statusDiv.innerHTML = `<div style="color: #28a745; background: #d4edda; padding: 10px; border-radius: 4px;">✅ SPY ${scenario} backfill started successfully! Check logs for progress.</div>`;
+                            } else {
+                                const error = await response.json();
+                                statusDiv.innerHTML = `<div style="color: #dc3545; background: #f8d7da; padding: 10px; border-radius: 4px;">❌ Error: ${error.detail}</div>`;
+                            }
+                        } catch (error) {
+                            statusDiv.innerHTML = `<div style="color: #dc3545; background: #f8d7da; padding: 10px; border-radius: 4px;">❌ Network error: ${error.message}</div>`;
+                        }
+                    }
+                    
+                    async function runCustomSpyBackfill() {
+                        const startDate = document.getElementById('spy-backfill-start-date').value;
+                        const endDate = document.getElementById('spy-backfill-end-date').value;
+                        const statusDiv = document.getElementById('spy-backfill-status');
+                        
+                        if (!startDate) {
+                            statusDiv.style.display = 'block';
+                            statusDiv.innerHTML = `<div style="color: #dc3545; background: #f8d7da; padding: 10px; border-radius: 4px;">❌ Please select a start date</div>`;
+                            return;
+                        }
+                        
+                        statusDiv.style.display = 'block';
+                        statusDiv.innerHTML = `<div style="color: #6f42c1; background: #f3e5f5; padding: 10px; border-radius: 4px;">🔄 Starting custom SPY backfill from ${startDate}${endDate ? ' to ' + endDate : ''}...</div>`;
+                        
+                        try {
+                            let url = `/api/spy-expected-move/backfill/custom?start_date=${startDate}`;
+                            if (endDate) {
+                                url += `&end_date=${endDate}`;
+                            }
+                            
+                            const response = await fetch(url, {
+                                method: 'POST'
+                            });
+                            
+                            if (response.ok) {
+                                const result = await response.json();
+                                statusDiv.innerHTML = `<div style="color: #28a745; background: #d4edda; padding: 10px; border-radius: 4px;">✅ Custom SPY backfill started successfully! Check logs for progress.</div>`;
+                            } else {
+                                const error = await response.json();
+                                statusDiv.innerHTML = `<div style="color: #dc3545; background: #f8d7da; padding: 10px; border-radius: 4px;">❌ Error: ${error.detail}</div>`;
+                            }
+                        } catch (error) {
+                            statusDiv.innerHTML = `<div style="color: #dc3545; background: #f8d7da; padding: 10px; border-radius: 4px;">❌ Network error: ${error.message}</div>`;
+                        }
+                    }
+                </script>
+            </div>
+        </body>
+        </html>
+        """
+        
+        return HTMLResponse(content=html_content)
+        
+    except Exception as e:
+        logger.error(f"Error generating SPY dashboard: {e}")
+        return HTMLResponse(
+            content=f"<html><body><h1>Error</h1><p>Failed to load SPY dashboard: {e}</p></body></html>",
+            status_code=500
+        )
+
+@app.post("/api/spy-expected-move/backfill/scenario/{scenario}")
+async def backfill_spy_scenario(scenario: str, background_tasks: BackgroundTasks):
+    """Run predefined SPY backfill scenarios"""
+    from datetime import timedelta
+    
+    et_tz = pytz.timezone('US/Eastern')
+    today = datetime.now(et_tz).date()
+    
+    # SPY 0DTE options only available from 2023 onwards
+    # Limit scenarios to realistic date ranges
+    scenarios = {
+        "1week": {"days": 7, "description": "Last 7 days"},
+        "1month": {"days": 30, "description": "Last 30 days"},
+        "3months": {"days": 90, "description": "Last 3 months"},
+        "6months": {"days": 180, "description": "Last 6 months"},
+        "1year": {"days": 365, "description": "Last 1 year (limited by SPY 0DTE availability)"},
+        "max": {"days": 730, "description": "Maximum available (since Jan 2023)"}
+    }
+    
+    if scenario not in scenarios:
+        raise HTTPException(
+            status_code=400, 
+            detail=f"Unknown scenario: {scenario}. Available: {', '.join(scenarios.keys())}"
+        )
+    
+    config = scenarios[scenario]
+    start_date = today - timedelta(days=config["days"])
+    end_date = today - timedelta(days=1)
+    
+    # Ensure we don't go before SPY 0DTE options were available (Jan 1, 2023)
+    spy_0dte_launch = date(2023, 1, 1)
+    if start_date < spy_0dte_launch:
+        start_date = spy_0dte_launch
+    
+    # Run SPY backfill in background
+    async def run_spy_backfill():
+        try:
+            logger.info(f"Starting SPY backfill scenario: {scenario} ({config['description']})")
+            success_count = 0
+            error_count = 0
+            skipped_count = 0
+            
+            current_date = start_date
+            while current_date <= end_date:
+                try:
+                    # Check if it's a trading day (basic check - skip weekends)
+                    if current_date.weekday() >= 5:  # Saturday = 5, Sunday = 6
+                        current_date += timedelta(days=1)
+                        continue
+                    
+                    # Check if data already exists
+                    existing_data = await spy_calculator.get_spy_data_for_date(current_date.strftime('%Y-%m-%d'))
+                    if existing_data:
+                        logger.info(f"SPY data already exists for {current_date}, skipping")
+                        skipped_count += 1
+                        current_date += timedelta(days=1)
+                        continue
+                    
+                    # Calculate SPY expected move for this date
+                    spy_data = await spy_calculator.calculate_spy_expected_move_historical(current_date)
+                    
+                    if spy_data:
+                        await spy_calculator._store_spy_data(spy_data)
+                        success_count += 1
+                        logger.info(f"Successfully backfilled SPY data for {current_date}")
+                    else:
+                        error_count += 1
+                        logger.warning(f"Failed to calculate SPY data for {current_date}")
+                        
+                except Exception as e:
+                    error_count += 1
+                    logger.error(f"Error backfilling SPY data for {current_date}: {e}")
+                
+                current_date += timedelta(days=1)
+                
+                # Small delay to avoid overwhelming the API
+                await asyncio.sleep(0.5)
+            
+            # Send Discord notification if enabled
+            if discord_notifier and discord_notifier.is_enabled():
+                total_days = success_count + error_count + skipped_count
+                success_rate = (success_count / total_days * 100) if total_days > 0 else 0
+                
+                message = f"""🔄 **SPY Expected Move Backfill Completed**
+                
+**Scenario:** {scenario} ({config['description']})
+**Date Range:** {start_date} to {end_date}
+**Results:**
+• ✅ Successful: {success_count}
+• ❌ Failed: {error_count}  
+• ⏭️ Skipped: {skipped_count}
+• 📊 Success Rate: {success_rate:.1f}%
+
+*Historical SPY expected move data is now available for analysis.*"""
+                
+                await discord_notifier.send_message(message)
+            
+            logger.info(f"SPY backfill {scenario} completed: {success_count} success, {error_count} errors, {skipped_count} skipped")
+            
+        except Exception as e:
+            logger.error(f"SPY backfill {scenario} failed: {e}")
+    
+    background_tasks.add_task(run_spy_backfill)
+    
+    return {
+        "status": "started",
+        "scenario": scenario,
+        "description": config["description"],
+        "date_range": {
+            "start": start_date.isoformat(),
+            "end": end_date.isoformat()
+        },
+        "message": f"SPY backfill {scenario} started in background. Check logs for progress."
+    }
+
+@app.post("/api/spy-expected-move/backfill/custom")
+async def backfill_spy_custom(
+    background_tasks: BackgroundTasks,
+    start_date: str,
+    end_date: str = None,
+    batch_size: int = 5,
+    delay: float = 2.0
+):
+    """Run custom date range SPY backfill"""
+    try:
+        # Parse dates
+        start_dt = datetime.strptime(start_date, '%Y-%m-%d').date()
+        
+        if end_date:
+            end_dt = datetime.strptime(end_date, '%Y-%m-%d').date()
+        else:
+            et_tz = pytz.timezone('US/Eastern')
+            end_dt = datetime.now(et_tz).date() - timedelta(days=1)
+        
+        # Validate dates
+        today = datetime.now(pytz.timezone('US/Eastern')).date()
+        spy_0dte_launch = date(2023, 1, 1)
+        
+        if start_dt >= end_dt:
+            raise HTTPException(status_code=400, detail="Start date must be before end date")
+        if end_dt >= today:
+            raise HTTPException(status_code=400, detail="End date must be before today")
+        if start_dt < spy_0dte_launch:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Start date cannot be before {spy_0dte_launch} (SPY 0DTE options launch date)"
+            )
+        
+        # Run SPY backfill in background
+        async def run_spy_custom_backfill():
+            try:
+                logger.info(f"Starting custom SPY backfill: {start_dt} to {end_dt}")
+                success_count = 0
+                error_count = 0
+                skipped_count = 0
+                
+                current_date = start_dt
+                batch_count = 0
+                
+                while current_date <= end_dt:
+                    batch_dates = []
+                    
+                    # Collect batch of dates
+                    for _ in range(batch_size):
+                        if current_date > end_dt:
+                            break
+                        
+                        # Skip weekends
+                        if current_date.weekday() < 5:  # Monday = 0, Friday = 4
+                            batch_dates.append(current_date)
+                        
+                        current_date += timedelta(days=1)
+                    
+                    if not batch_dates:
+                        break
+                    
+                    # Process batch
+                    batch_count += 1
+                    logger.info(f"Processing SPY batch {batch_count}: {len(batch_dates)} dates")
+                    
+                    for date in batch_dates:
+                        try:
+                            # Check if data already exists
+                            existing_data = await spy_calculator.get_spy_data_for_date(date.strftime('%Y-%m-%d'))
+                            if existing_data:
+                                logger.info(f"SPY data already exists for {date}, skipping")
+                                skipped_count += 1
+                                continue
+                            
+                            # Calculate SPY expected move for this date
+                            spy_data = await spy_calculator.calculate_spy_expected_move_historical(date)
+                            
+                            if spy_data:
+                                await spy_calculator._store_spy_data(spy_data)
+                                success_count += 1
+                                logger.info(f"Successfully backfilled SPY data for {date}")
+                            else:
+                                error_count += 1
+                                logger.warning(f"Failed to calculate SPY data for {date}")
+                                
+                        except Exception as e:
+                            error_count += 1
+                            logger.error(f"Error backfilling SPY data for {date}: {e}")
+                    
+                    # Delay between batches
+                    if current_date <= end_dt:
+                        await asyncio.sleep(delay)
+                
+                # Send Discord notification if enabled
+                if discord_notifier and discord_notifier.is_enabled():
+                    total_days = success_count + error_count + skipped_count
+                    success_rate = (success_count / total_days * 100) if total_days > 0 else 0
+                    
+                    message = f"""🔄 **Custom SPY Expected Move Backfill Completed**
+                    
+**Date Range:** {start_dt} to {end_dt}
+**Results:**
+• ✅ Successful: {success_count}
+• ❌ Failed: {error_count}  
+• ⏭️ Skipped: {skipped_count}
+• 📊 Success Rate: {success_rate:.1f}%
+
+*Historical SPY expected move data is now available for analysis.*"""
+                    
+                    await discord_notifier.send_message(message)
+                
+                logger.info(f"Custom SPY backfill completed: {success_count} success, {error_count} errors, {skipped_count} skipped")
+                
+            except Exception as e:
+                logger.error(f"Custom SPY backfill failed: {e}")
+        
+        background_tasks.add_task(run_spy_custom_backfill)
+        
+        return {
+            "status": "started",
+            "date_range": {
+                "start": start_dt.isoformat(),
+                "end": end_dt.isoformat()
+            },
+            "batch_size": batch_size,
+            "delay": delay,
+            "message": f"Custom SPY backfill started in background from {start_dt} to {end_dt}. Check logs for progress."
+        }
+        
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=f"Invalid date format. Use YYYY-MM-DD: {e}")
+    except Exception as e:
+        logger.error(f"Error starting custom SPY backfill: {e}")
+        raise HTTPException(status_code=500, detail="Failed to start custom SPY backfill")
+
+@app.get("/api/spy-expected-move/test-stats")
+async def test_spy_stats():
+    """Test endpoint to verify SPY multi-timeframe statistics"""
+    try:
+        result = await get_spy_multi_timeframe_statistics()
+        return {
+            "status": "success",
+            "function_result": result,
+            "test_values": {
+                "result_type": str(type(result)),
+                "has_status": "status" in result if isinstance(result, dict) else False,
+                "status_value": result.get("status") if isinstance(result, dict) else None,
+                "has_timeframes": "timeframes" in result if isinstance(result, dict) else False,
+                "timeframe_count": len(result.get("timeframes", {})) if isinstance(result, dict) else 0,
+                "sample_1d_data": result.get("timeframes", {}).get("1D") if isinstance(result, dict) else None
+            }
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "error": str(e),
+            "error_type": str(type(e))
+        }
+
+@app.get("/api/spy-expected-move/debug-dashboard-data")
+async def debug_spy_dashboard_data():
+    """Debug endpoint to see exactly what data the SPY dashboard receives"""
+    try:
+        # Get the same data the dashboard gets
+        multi_stats = await get_spy_multi_timeframe_statistics()
+        
+        # Extract and process exactly like the dashboard does
+        timeframes = multi_stats.get("timeframes", {})
+        debug_info = {}
+        
+        for timeframe_key in sorted(timeframes.keys(), key=lambda x: int(x.replace('D', ''))):
+            timeframe_data = timeframes[timeframe_key]
+            
+            # Extract values with proper error handling (same as dashboard)
+            mean_val = timeframe_data.get('mean', 0.0)
+            min_val = timeframe_data.get('min', 0.0)
+            max_val = timeframe_data.get('max', 0.0)
+            data_points = timeframe_data.get('data_points', 0)
+            
+            debug_info[timeframe_key] = {
+                "raw_timeframe_data": timeframe_data,
+                "extracted_mean": mean_val,
+                "extracted_min": min_val,
+                "extracted_max": max_val,
+                "extracted_data_points": data_points,
+                "mean_type": str(type(mean_val)),
+                "formatted_mean": f"±${mean_val:.2f}"
+            }
+        
+        return {
+            "status": "debug",
+            "multi_stats_status": multi_stats.get("status"),
+            "multi_stats_type": str(type(multi_stats)),
+            "timeframes_count": len(timeframes),
+            "sample_debug_info": debug_info,
+            "first_timeframe_raw": list(timeframes.values())[0] if timeframes else None
+        }
+        
+    except Exception as e:
+        return {
+            "status": "error",
+            "error": str(e),
+            "error_type": str(type(e))
+        }
 
 # Run the application
 if __name__ == "__main__":
