@@ -560,9 +560,9 @@ class SPYCalculator:
                 'expected_move_1sigma': spy_data.expected_move_1sigma,
                 'expected_move_2sigma': spy_data.expected_move_2sigma,
                 'implied_volatility': spy_data.implied_volatility,
-                'range_efficiency': spy_data.range_efficiency,
-                'orb_high': spy_data.orb_high,
-                'orb_low': spy_data.orb_low,
+                'range_efficiency': spy_data.range_efficiency if spy_data.range_efficiency is not None else 'None',
+                'orb_high': spy_data.orb_high if spy_data.orb_high is not None else 'None',
+                'orb_low': spy_data.orb_low if spy_data.orb_low is not None else 'None',
                 'timestamp': spy_data.timestamp
             }
             
