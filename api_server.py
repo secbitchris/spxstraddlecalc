@@ -9,6 +9,7 @@ import logging
 from datetime import datetime, date
 import pytz
 from spx_calculator import SPXStraddleCalculator
+from spy_calculator import SPYCalculator
 from discord_notifier import DiscordNotifier
 from gist_publisher import GistPublisher
 import os
@@ -41,24 +42,30 @@ app.add_middleware(
 
 # Global instances
 calculator = None
+spy_calculator = None
 discord_notifier = None
 gist_publisher = None
 
 @app.on_event("startup")
 async def startup_event():
-    """Initialize the SPX calculator, Discord notifier, and Gist publisher on startup"""
-    global calculator, discord_notifier, gist_publisher
+    """Initialize the SPX calculator, SPY calculator, Discord notifier, and Gist publisher on startup"""
+    global calculator, spy_calculator, discord_notifier, gist_publisher
     
-    # Initialize calculator
+    # Initialize calculators
     polygon_api_key = os.getenv("POLYGON_API_KEY")
     redis_url = os.getenv("REDIS_URL", "redis://localhost:6379")
     
     if not polygon_api_key:
         raise ValueError("POLYGON_API_KEY environment variable is required")
     
+    # Initialize SPX calculator
     calculator = SPXStraddleCalculator(polygon_api_key, redis_url)
     await calculator.initialize()
     logger.info("SPX Straddle Calculator initialized")
+    
+    # Initialize SPY calculator
+    spy_calculator = SPYCalculator()
+    logger.info("SPY Expected Move Calculator initialized")
     
     # Initialize Discord notifier
     discord_notifier = DiscordNotifier()
@@ -78,7 +85,7 @@ async def startup_event():
 @app.on_event("shutdown")
 async def shutdown_event():
     """Clean up on shutdown"""
-    global calculator, discord_notifier, gist_publisher
+    global calculator, spy_calculator, discord_notifier, gist_publisher
     if calculator:
         await calculator.close()
     if discord_notifier:
@@ -950,6 +957,421 @@ def _calculate_moving_average(costs, window):
     
     return moving_avg
 
+# SPY Expected Move endpoints
+@app.get("/api/spy-expected-move/today")
+async def get_spy_expected_move_today():
+    """Get today's SPY expected move data"""
+    try:
+        today = datetime.now().strftime('%Y-%m-%d')
+        result = await spy_calculator.get_spy_data_for_date(today)
+        
+        if result:
+            return {
+                "status": "success",
+                "date": result['date'],
+                "spy_price_930am": result['spy_price_930am'],
+                "atm_strike": result['atm_strike'],
+                "call_price_932am": result['call_price_932am'],
+                "put_price_932am": result['put_price_932am'],
+                "straddle_cost": result['straddle_cost'],
+                "expected_move_1sigma": result['expected_move_1sigma'],
+                "expected_move_2sigma": result['expected_move_2sigma'],
+                "implied_volatility": result['implied_volatility'],
+                "range_efficiency": result.get('range_efficiency'),
+                "orb_high": result.get('orb_high'),
+                "orb_low": result.get('orb_low'),
+                "timestamp": result['timestamp']
+            }
+        else:
+            return {
+                "status": "no_data",
+                "message": "No SPY expected move data available for today",
+                "date": today
+            }
+    except Exception as e:
+        logger.error(f"Error getting today's SPY expected move data: {e}")
+        raise HTTPException(status_code=500, detail="Failed to retrieve SPY expected move data")
+
+@app.post("/api/spy-expected-move/calculate")
+async def calculate_spy_expected_move(background_tasks: BackgroundTasks, notify_discord: bool = True):
+    """Trigger SPY expected move calculation with optional Discord notification"""
+    try:
+        result = await spy_calculator.calculate_spy_expected_move()
+        
+        if result:
+            response_data = {
+                "status": "success",
+                "date": result.date,
+                "spy_price_930am": result.spy_price_930am,
+                "atm_strike": result.atm_strike,
+                "call_price_932am": result.call_price_932am,
+                "put_price_932am": result.put_price_932am,
+                "straddle_cost": result.straddle_cost,
+                "expected_move_1sigma": result.expected_move_1sigma,
+                "expected_move_2sigma": result.expected_move_2sigma,
+                "implied_volatility": result.implied_volatility,
+                "range_efficiency": result.range_efficiency,
+                "orb_high": result.orb_high,
+                "orb_low": result.orb_low,
+                "timestamp": result.timestamp
+            }
+            
+            # TODO: Send SPY Discord notification in background if enabled and requested
+            # if notify_discord and spy_discord_notifier and spy_discord_notifier.is_enabled():
+            #     background_tasks.add_task(spy_discord_notifier.notify_expected_move_result, response_data)
+            
+            return response_data
+        else:
+            raise HTTPException(status_code=500, detail="Failed to calculate SPY expected move")
+            
+    except Exception as e:
+        logger.error(f"Error calculating SPY expected move: {e}")
+        raise HTTPException(status_code=500, detail="Failed to calculate SPY expected move")
+
+@app.get("/api/spy-expected-move/history")
+async def get_spy_expected_move_history(days: int = 30):
+    """Get historical SPY expected move data"""
+    try:
+        if days < 1 or days > 1000:
+            raise HTTPException(status_code=400, detail="Days parameter must be between 1 and 1000")
+        
+        historical_data = await spy_calculator.get_spy_historical_data(days)
+        
+        return {
+            "status": "success",
+            "days_requested": days,
+            "data_points": len(historical_data),
+            "data": historical_data
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting SPY expected move history: {e}")
+        raise HTTPException(status_code=500, detail="Failed to retrieve SPY expected move history")
+
+@app.get("/api/spy-expected-move/statistics")
+async def get_spy_expected_move_statistics(days: int = 30):
+    """Get SPY expected move statistical analysis"""
+    try:
+        if days < 1 or days > 1000:
+            raise HTTPException(status_code=400, detail="Days parameter must be between 1 and 1000")
+        
+        stats = await spy_calculator.calculate_spy_statistics(days)
+        
+        return {
+            "status": "success",
+            "days_analyzed": days,
+            "statistics": stats
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting SPY expected move statistics: {e}")
+        raise HTTPException(status_code=500, detail="Failed to retrieve SPY expected move statistics")
+
+@app.get("/api/spy-expected-move/statistics/multi-timeframe")
+async def get_spy_multi_timeframe_statistics():
+    """Get SPY expected move statistics across multiple timeframes"""
+    try:
+        timeframes = [1, 2, 3, 4, 5, 6, 7, 14, 30, 45, 60, 90, 120, 170, 180, 240, 360, 540, 720]
+        results = {}
+        
+        for days in timeframes:
+            try:
+                stats = await spy_calculator.calculate_spy_statistics(days)
+                
+                if stats and 'expected_move' in stats:
+                    results[f"{days}D"] = {
+                        "mean": round(stats['expected_move']['mean'], 2),
+                        "std": round(stats['expected_move']['std'], 2),
+                        "min": round(stats['expected_move']['min'], 2),
+                        "max": round(stats['expected_move']['max'], 2),
+                        "data_points": stats['data_points']
+                    }
+                    
+            except Exception as e:
+                logger.warning(f"Failed to get SPY statistics for {days} days: {e}")
+                continue
+        
+        return {
+            "status": "success",
+            "timeframes": results,
+            "timestamp": datetime.now(pytz.timezone('US/Eastern')).isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting SPY multi-timeframe statistics: {e}")
+        raise HTTPException(status_code=500, detail="Failed to retrieve SPY multi-timeframe statistics")
+
+@app.get("/api/spy-expected-move/chart-data")
+async def get_spy_chart_data(days: int = 730, timeframe: str = "daily"):
+    """Get SPY expected move chart data with trend analysis"""
+    try:
+        if days < 1 or days > 1000:
+            raise HTTPException(status_code=400, detail="Days parameter must be between 1 and 1000")
+        
+        historical_data = await spy_calculator.get_spy_historical_data(days)
+        
+        if not historical_data:
+            return {
+                "status": "no_data",
+                "message": "No SPY data available for the requested period",
+                "days_requested": days
+            }
+        
+        # Process data for charting
+        processed_data = _process_spy_chart_data(historical_data, timeframe)
+        
+        return {
+            "status": "success",
+            "timeframe": timeframe,
+            "days_requested": days,
+            "data_points": len(historical_data),
+            "chart_data": processed_data
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting SPY chart data: {e}")
+        raise HTTPException(status_code=500, detail="Failed to retrieve SPY chart data")
+
+@app.get("/api/spy-expected-move/chart-config/{chart_type}")
+async def get_spy_chart_config(chart_type: str, days: int = 730):
+    """Get Chart.js configuration for SPY expected move charts"""
+    try:
+        # Get chart data
+        chart_data_response = await get_spy_chart_data(days=days)
+        
+        if chart_data_response["status"] != "success":
+            raise HTTPException(status_code=404, detail="No SPY data available for chart")
+        
+        chart_data = chart_data_response["chart_data"]
+        
+        # Generate Chart.js config based on chart type
+        if chart_type == "trend":
+            config = _generate_spy_trend_chart_config(chart_data, days)
+        elif chart_type == "volatility":
+            config = _generate_spy_volatility_chart_config(chart_data, days)
+        elif chart_type == "efficiency":
+            config = _generate_spy_efficiency_chart_config(chart_data, days)
+        else:
+            raise HTTPException(status_code=400, detail="Invalid chart type. Use: trend, volatility, efficiency")
+        
+        return config
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error generating SPY chart config: {e}")
+        raise HTTPException(status_code=500, detail="Failed to generate SPY chart configuration")
+
+def _process_spy_chart_data(data_points, timeframe):
+    """Process SPY data for charting"""
+    if timeframe == "daily":
+        # Sort by date
+        sorted_data = sorted(data_points, key=lambda x: x['date'])
+        
+        dates = [item['date'] for item in sorted_data]
+        expected_moves = [item['expected_move_1sigma'] for item in sorted_data]
+        straddle_costs = [item['straddle_cost'] for item in sorted_data]
+        implied_vols = [item['implied_volatility'] for item in sorted_data if item.get('implied_volatility')]
+        
+        # Calculate trend line for expected moves
+        trend_line = _calculate_trend_line(expected_moves)
+        
+        # Calculate moving averages
+        ma_7 = _calculate_moving_average(expected_moves, 7)
+        ma_30 = _calculate_moving_average(expected_moves, 30)
+        
+        return {
+            "dates": dates,
+            "expected_moves": expected_moves,
+            "straddle_costs": straddle_costs,
+            "implied_volatilities": implied_vols,
+            "trend_line": trend_line,
+            "moving_averages": {
+                "ma_7": ma_7,
+                "ma_30": ma_30
+            },
+            "statistics": {
+                "min": min(expected_moves) if expected_moves else 0,
+                "max": max(expected_moves) if expected_moves else 0,
+                "mean": sum(expected_moves) / len(expected_moves) if expected_moves else 0
+            }
+        }
+    
+    return {"error": "Unsupported timeframe"}
+
+def _generate_spy_trend_chart_config(chart_data, days):
+    """Generate Chart.js config for SPY trend analysis"""
+    return {
+        "type": "line",
+        "data": {
+            "labels": chart_data["dates"],
+            "datasets": [
+                {
+                    "label": "Expected Move (1σ)",
+                    "data": chart_data["expected_moves"],
+                    "borderColor": "rgb(34, 197, 94)",
+                    "backgroundColor": "rgba(34, 197, 94, 0.1)",
+                    "borderWidth": 2,
+                    "fill": False,
+                    "tension": 0.1
+                },
+                {
+                    "label": "Trend Line",
+                    "data": chart_data["trend_line"],
+                    "borderColor": "rgb(220, 38, 38)",
+                    "backgroundColor": "transparent",
+                    "borderWidth": 3,
+                    "borderDash": [8, 4],
+                    "fill": False,
+                    "tension": 0,
+                    "pointRadius": 0
+                },
+                {
+                    "label": "7-Day MA",
+                    "data": chart_data["moving_averages"]["ma_7"],
+                    "borderColor": "rgb(59, 130, 246)",
+                    "backgroundColor": "transparent",
+                    "borderWidth": 1.5,
+                    "fill": False,
+                    "tension": 0.3,
+                    "pointRadius": 0
+                }
+            ]
+        },
+        "options": {
+            "responsive": True,
+            "maintainAspectRatio": False,
+            "plugins": {
+                "title": {
+                    "display": True,
+                    "text": f"SPY Expected Move Trend Analysis ({days} Days)"
+                },
+                "legend": {
+                    "display": True,
+                    "position": "top"
+                }
+            },
+            "scales": {
+                "x": {
+                    "title": {
+                        "display": True,
+                        "text": "Date"
+                    }
+                },
+                "y": {
+                    "title": {
+                        "display": True,
+                        "text": "Expected Move ($)"
+                    }
+                }
+            },
+            "interaction": {
+                "intersect": False,
+                "mode": "index"
+            }
+        }
+    }
+
+def _generate_spy_volatility_chart_config(chart_data, days):
+    """Generate Chart.js config for SPY volatility analysis"""
+    return {
+        "type": "line",
+        "data": {
+            "labels": chart_data["dates"],
+            "datasets": [
+                {
+                    "label": "Implied Volatility",
+                    "data": chart_data["implied_volatilities"],
+                    "borderColor": "rgb(168, 85, 247)",
+                    "backgroundColor": "rgba(168, 85, 247, 0.1)",
+                    "borderWidth": 2,
+                    "fill": True,
+                    "tension": 0.1
+                }
+            ]
+        },
+        "options": {
+            "responsive": True,
+            "maintainAspectRatio": False,
+            "plugins": {
+                "title": {
+                    "display": True,
+                    "text": f"SPY Implied Volatility Trend ({days} Days)"
+                },
+                "legend": {
+                    "display": True,
+                    "position": "top"
+                }
+            },
+            "scales": {
+                "x": {
+                    "title": {
+                        "display": True,
+                        "text": "Date"
+                    }
+                },
+                "y": {
+                    "title": {
+                        "display": True,
+                        "text": "Implied Volatility (%)"
+                    }
+                }
+            }
+        }
+    }
+
+def _generate_spy_efficiency_chart_config(chart_data, days):
+    """Generate Chart.js config for SPY range efficiency analysis"""
+    return {
+        "type": "scatter",
+        "data": {
+            "datasets": [
+                {
+                    "label": "Expected vs Actual Range",
+                    "data": [
+                        {"x": chart_data["expected_moves"][i], "y": chart_data["straddle_costs"][i]}
+                        for i in range(len(chart_data["expected_moves"]))
+                    ],
+                    "backgroundColor": "rgba(34, 197, 94, 0.6)",
+                    "borderColor": "rgb(34, 197, 94)",
+                    "borderWidth": 1
+                }
+            ]
+        },
+        "options": {
+            "responsive": True,
+            "maintainAspectRatio": False,
+            "plugins": {
+                "title": {
+                    "display": True,
+                    "text": f"SPY Range Efficiency Analysis ({days} Days)"
+                },
+                "legend": {
+                    "display": True,
+                    "position": "top"
+                }
+            },
+            "scales": {
+                "x": {
+                    "title": {
+                        "display": True,
+                        "text": "Expected Move ($)"
+                    }
+                },
+                "y": {
+                    "title": {
+                        "display": True,
+                        "text": "Straddle Cost ($)"
+                    }
+                }
+            }
+        }
+    }
+
 # Market day validation endpoints
 @app.get("/api/market-days/validate/{date_str}")
 async def validate_market_day(date_str: str):
@@ -1323,37 +1745,43 @@ async def backfill_custom(
         logger.error(f"Error starting custom backfill: {e}")
         raise HTTPException(status_code=500, detail="Failed to start backfill")
 
-@app.get("/api/spx-straddle/dashboard", response_class=HTMLResponse)
-async def get_spx_straddle_dashboard():
-    """Simple HTML dashboard for SPX straddle data"""
+@app.get("/api/dashboard", response_class=HTMLResponse)
+async def get_unified_dashboard():
+    """Unified dashboard for SPX straddle and SPY expected move data"""
     try:
-        # Get current data
-        current_data = await calculator.get_spx_straddle_cost()
+        # Get SPX current data
+        spx_current_data = await calculator.get_spx_straddle_cost()
         
-        # Get recent history
-        history_data = await calculator.get_spx_straddle_history(7)
+        # Get SPY current data
+        today = datetime.now().strftime('%Y-%m-%d')
+        spy_current_data = await spy_calculator.get_spy_data_for_date(today)
         
-        # Get statistics
-        stats_data = await calculator.calculate_spx_straddle_statistics(30)
-        
-        # Get multi-timeframe statistics
+        # Get SPX multi-timeframe statistics
         try:
-            multi_stats_response = await get_multi_timeframe_statistics()
-            multi_stats = multi_stats_response if isinstance(multi_stats_response, dict) else {}
+            spx_multi_stats_response = await get_multi_timeframe_statistics()
+            spx_multi_stats = spx_multi_stats_response if isinstance(spx_multi_stats_response, dict) else {}
         except:
-            multi_stats = {"status": "error"}
+            spx_multi_stats = {"status": "error"}
+        
+        # Get SPY multi-timeframe statistics
+        try:
+            spy_multi_stats_response = await get_spy_multi_timeframe_statistics()
+            spy_multi_stats = spy_multi_stats_response if isinstance(spy_multi_stats_response, dict) else {}
+        except:
+            spy_multi_stats = {"status": "error"}
         
         # Check if Discord is configured
         discord_enabled = discord_notifier.is_enabled() if discord_notifier else False
         
-        # Build HTML response
+        # Build HTML response with unified dashboard
         html_content = f"""
         <!DOCTYPE html>
         <html>
         <head>
-            <title>SPX 0DTE Straddle Dashboard</title>
+            <title>Options Analytics Dashboard</title>
             <meta charset="utf-8">
             <meta name="viewport" content="width=device-width, initial-scale=1">
+            <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
             <style>
                 body {{ 
                     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; 
@@ -1361,8 +1789,24 @@ async def get_spx_straddle_dashboard():
                     padding: 20px; 
                     background-color: #f5f5f5;
                 }}
-                .container {{ max-width: 1200px; margin: 0 auto; }}
+                .container {{ max-width: 1400px; margin: 0 auto; }}
                 .header {{ text-align: center; margin-bottom: 30px; }}
+                .asset-selector {{ 
+                    text-align: center; 
+                    margin-bottom: 30px; 
+                }}
+                .asset-dropdown {{ 
+                    padding: 12px 20px; 
+                    font-size: 16px; 
+                    border: 2px solid #007bff; 
+                    border-radius: 8px; 
+                    background: white; 
+                    color: #007bff;
+                    font-weight: bold;
+                    cursor: pointer;
+                    min-width: 250px;
+                }}
+                .asset-dropdown:focus {{ outline: none; border-color: #0056b3; }}
                 .card {{ 
                     background: white; 
                     border-radius: 8px; 
@@ -1374,6 +1818,7 @@ async def get_spx_straddle_dashboard():
                 .status-error {{ color: #dc3545; font-weight: bold; }}
                 .status-calculating {{ color: #007bff; font-weight: bold; }}
                 .status-pending {{ color: #ffc107; font-weight: bold; }}
+                .status-no_data {{ color: #6c757d; font-weight: bold; }}
                 table {{ border-collapse: collapse; width: 100%; margin-top: 15px; }}
                 th, td {{ border: 1px solid #ddd; padding: 12px; text-align: left; }}
                 th {{ background-color: #f8f9fa; font-weight: 600; }}
@@ -1395,576 +1840,335 @@ async def get_spx_straddle_dashboard():
                 .btn:hover {{ background: #0056b3; }}
                 .btn-success {{ background: #28a745; }}
                 .btn-success:hover {{ background: #1e7e34; }}
-
+                .btn-spy {{ background: #17a2b8; }}
+                .btn-spy:hover {{ background: #138496; }}
+                .asset-content {{ display: none; }}
+                .asset-content.active {{ display: block; }}
+                .chart-container {{ position: relative; height: 400px; margin: 20px 0; }}
+                .chart-controls {{ margin: 20px 0; text-align: center; }}
+                .chart-controls select, .chart-controls button {{ 
+                    margin: 5px; 
+                    padding: 8px 12px; 
+                    border: 1px solid #ddd; 
+                    border-radius: 4px; 
+                }}
+                .fullscreen-btn {{ 
+                    background: #6f42c1; 
+                    color: white; 
+                    border: none; 
+                    padding: 8px 16px; 
+                    border-radius: 4px; 
+                    cursor: pointer; 
+                    margin: 5px;
+                }}
+                .fullscreen-btn:hover {{ background: #5a359a; }}
             </style>
         </head>
         <body>
             <div class="container">
                 <div class="header">
-                    <h1>📊 SPX 0DTE Straddle Dashboard</h1>
-                    <p>Real-time SPX straddle cost tracking using Polygon.io</p>
+                    <h1>📊 Options Analytics Dashboard</h1>
+                    <p>Real-time SPX straddle costs & SPY expected moves using Polygon.io</p>
                 </div>
                 
-                <div class="card">
-                    <h2>🎯 Current Status</h2>
-                    <p><strong>Status:</strong> <span class="status-{current_data.get('calculation_status', 'unknown')}">{current_data.get('calculation_status', 'Unknown').upper().replace('_', ' ')}</span></p>
-                    <p><strong>Last Update:</strong> {current_data.get('timestamp', 'N/A')}</p>
-                    <p><strong>Discord Notifications:</strong> {'✅ Enabled' if discord_enabled else '❌ Disabled'}</p>
+                <div class="asset-selector">
+                    <select id="assetDropdown" class="asset-dropdown" onchange="switchAsset()">
+                        <option value="SPX">SPX 0DTE Straddle Analysis</option>
+                        <option value="SPY">SPY Expected Move Analysis</option>
+                    </select>
+                </div>
+                
+                <!-- SPX Content -->
+                <div id="spx-content" class="asset-content active">
+                    <div class="card">
+                        <h2>🎯 SPX Current Status</h2>
+                        <p><strong>Status:</strong> <span class="status-{spx_current_data.get('calculation_status', 'unknown')}">{spx_current_data.get('calculation_status', 'Unknown').upper().replace('_', ' ')}</span></p>
+                        <p><strong>Last Update:</strong> {spx_current_data.get('timestamp', 'N/A')}</p>
+                        <p><strong>Discord Notifications:</strong> {'✅ Enabled' if discord_enabled else '❌ Disabled'}</p>
         """
         
-        # Add current straddle data if available
-        if current_data.get('calculation_status') == 'available':
+        # Add current SPX straddle data if available
+        if spx_current_data.get('calculation_status') == 'available':
             html_content += f"""
-                    <div style="margin-top: 20px;">
-                        <div class="metric">
-                            <div class="metric-value">${current_data.get('straddle_cost', 0):.2f}</div>
-                            <div class="metric-label">Straddle Cost</div>
+                        <div style="margin-top: 20px;">
+                            <div class="metric">
+                                <div class="metric-value">${spx_current_data.get('straddle_cost', 0):.2f}</div>
+                                <div class="metric-label">Straddle Cost</div>
+                            </div>
+                            <div class="metric">
+                                <div class="metric-value">${spx_current_data.get('spx_price_930am', 0):.2f}</div>
+                                <div class="metric-label">SPX @ 9:30 AM</div>
+                            </div>
+                            <div class="metric">
+                                <div class="metric-value">{spx_current_data.get('atm_strike', 0)}</div>
+                                <div class="metric-label">ATM Strike</div>
+                            </div>
+                            <div class="metric">
+                                <div class="metric-value">${spx_current_data.get('call_price_931am', 0):.2f}</div>
+                                <div class="metric-label">Call Price</div>
+                            </div>
+                            <div class="metric">
+                                <div class="metric-value">${spx_current_data.get('put_price_931am', 0):.2f}</div>
+                                <div class="metric-label">Put Price</div>
+                            </div>
                         </div>
-                        <div class="metric">
-                            <div class="metric-value">${current_data.get('spx_price_930am', 0):.2f}</div>
-                            <div class="metric-label">SPX @ 9:30 AM</div>
-                        </div>
-                        <div class="metric">
-                            <div class="metric-value">{current_data.get('atm_strike', 0)}</div>
-                            <div class="metric-label">ATM Strike</div>
-                        </div>
-                        <div class="metric">
-                            <div class="metric-value">${current_data.get('call_price_931am', 0):.2f}</div>
-                            <div class="metric-label">Call Price</div>
-                        </div>
-                        <div class="metric">
-                            <div class="metric-value">${current_data.get('put_price_931am', 0):.2f}</div>
-                            <div class="metric-label">Put Price</div>
-                        </div>
-                    </div>
             """
         
         html_content += """
-                    <div style="margin-top: 20px;">
-                        <a href="/api/spx-straddle/calculate" class="btn">🔄 Calculate Now</a>
-                        <a href="/api/discord/test" class="btn btn-success">🧪 Test Discord</a>
+                        <div style="margin-top: 20px;">
+                            <a href="/api/spx-straddle/calculate" class="btn">🔄 Calculate Now</a>
+                            <a href="/api/discord/test" class="btn btn-success">🧪 Test Discord</a>
+                        </div>
+                    </div>
+                    
+                    <!-- SPX Charts -->
+                    <div class="card">
+                        <h2>📈 SPX Trend Analysis</h2>
+                        <div class="chart-controls">
+                            <select id="spx-time-period" onchange="updateSPXChart()">
+                                <option value="30">30 Days</option>
+                                <option value="90">3 Months</option>
+                                <option value="180">6 Months</option>
+                                <option value="365">1 Year</option>
+                                <option value="730" selected>2 Years</option>
+                            </select>
+                            <select id="spx-chart-type" onchange="updateSPXChart()">
+                                <option value="trend" selected>Trend Analysis</option>
+                                <option value="moving-averages">Moving Averages</option>
+                                <option value="comparison">Range Analysis</option>
+                            </select>
+                            <button class="fullscreen-btn" onclick="toggleFullscreen('spx-chart-container')">🔍 Fullscreen</button>
+                        </div>
+                        <div id="spx-chart-container" class="chart-container">
+                            <canvas id="spx-chart"></canvas>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- SPY Content -->
+                <div id="spy-content" class="asset-content">
+                    <div class="card">
+                        <h2>🎯 SPY Current Status</h2>
+        """
+        
+        # Add SPY current data
+        if spy_current_data:
+            html_content += f"""
+                        <p><strong>Status:</strong> <span class="status-available">DATA AVAILABLE</span></p>
+                        <p><strong>Last Update:</strong> {spy_current_data.get('timestamp', 'N/A')}</p>
+                        <p><strong>Timing:</strong> 9:30 AM (price) → 9:32 AM (straddle)</p>
+                        
+                        <div style="margin-top: 20px;">
+                            <div class="metric">
+                                <div class="metric-value">±${spy_current_data.get('expected_move_1sigma', 0):.2f}</div>
+                                <div class="metric-label">Expected Move (1σ)</div>
+                            </div>
+                            <div class="metric">
+                                <div class="metric-value">${spy_current_data.get('spy_price_930am', 0):.2f}</div>
+                                <div class="metric-label">SPY @ 9:30 AM</div>
+                            </div>
+                            <div class="metric">
+                                <div class="metric-value">{spy_current_data.get('atm_strike', 0)}</div>
+                                <div class="metric-label">ATM Strike</div>
+                            </div>
+                            <div class="metric">
+                                <div class="metric-value">${spy_current_data.get('straddle_cost', 0):.2f}</div>
+                                <div class="metric-label">Straddle Cost</div>
+                            </div>
+                            <div class="metric">
+                                <div class="metric-value">{spy_current_data.get('implied_volatility', 0):.1%}</div>
+                                <div class="metric-label">Implied Volatility</div>
+                            </div>
+                        </div>
+            """
+        else:
+            html_content += """
+                        <p><strong>Status:</strong> <span class="status-no_data">NO DATA AVAILABLE</span></p>
+                        <p><strong>Message:</strong> No SPY expected move data for today. Calculate to generate data.</p>
+            """
+        
+        html_content += """
+                        <div style="margin-top: 20px;">
+                            <a href="/api/spy-expected-move/calculate" class="btn btn-spy">🔄 Calculate SPY Move</a>
+                            <a href="/api/spy-expected-move/statistics/multi-timeframe" class="btn">📊 View Statistics</a>
+                        </div>
+                    </div>
+                    
+                    <!-- SPY Charts -->
+                    <div class="card">
+                        <h2>📈 SPY Expected Move Analysis</h2>
+                        <div class="chart-controls">
+                            <select id="spy-time-period" onchange="updateSPYChart()">
+                                <option value="30">30 Days</option>
+                                <option value="90">3 Months</option>
+                                <option value="180">6 Months</option>
+                                <option value="365">1 Year</option>
+                                <option value="730" selected>2 Years</option>
+                            </select>
+                            <select id="spy-chart-type" onchange="updateSPYChart()">
+                                <option value="trend" selected>Expected Move Trend</option>
+                                <option value="volatility">Implied Volatility</option>
+                                <option value="efficiency">Range Efficiency</option>
+                            </select>
+                            <button class="fullscreen-btn" onclick="toggleFullscreen('spy-chart-container')">🔍 Fullscreen</button>
+                        </div>
+                        <div id="spy-chart-container" class="chart-container">
+                            <canvas id="spy-chart"></canvas>
+                        </div>
                     </div>
                 </div>
         """
         
-        # Add multi-timeframe statistics if available
-        if multi_stats.get('status') == 'success' and multi_stats.get('timeframes'):
-            timeframes = multi_stats.get('timeframes', {})
-            summary = multi_stats.get('summary', {})
-            
-            html_content += f"""
-                <div class="card">
-                    <h2>📈 Multi-Timeframe Statistics</h2>
-                    <p><strong>Available Timeframes:</strong> {len(timeframes)} periods with sufficient data</p>
-                    <p><strong>Recommended Analysis Period:</strong> {summary.get('recommended_timeframe', 'N/A')}</p>
-                    <p><strong>Trend Consistency:</strong> {'✅ Consistent' if summary.get('trend_consistency') else '⚠️ Mixed'}</p>
-                    
-                    <div style="overflow-x: auto; margin-top: 20px;">
-                        <table style="min-width: 100%;">
-                            <thead>
-                                <tr>
-                                    <th>Period</th>
-                                    <th>Valid Market Days</th>
-                                    <th>Average</th>
-                                    <th>Range</th>
-                                    <th>Trend</th>
-                                    <th>Volatility</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-            """
-            
-            # Sort timeframes by period length
-            sorted_timeframes = sorted(timeframes.items(), key=lambda x: x[1]['period_days'])
-            
-            for period_key, data in sorted_timeframes:
-                period_days = data['period_days']
-                valid_market_days = data['valid_market_days']
-                coverage = summary.get('data_coverage', {}).get(period_key, {}).get('coverage_percentage', 0)
-                
-                desc_stats = data.get('descriptive_stats', {})
-                trend = data.get('trend_analysis', {})
-                volatility = data.get('volatility_analysis', {})
-                
-                # Format period name (use period_label if available, especially for YTD)
-                if data.get('is_ytd', False):
-                    period_name = f"📅 {data.get('period_label', 'YTD')}"
-                elif period_days < 30:
-                    period_name = f"{period_days}d"
-                elif period_days < 365:
-                    period_name = f"{period_days//30}m" if period_days % 30 == 0 else f"{period_days}d"
-                else:
-                    period_name = f"{period_days//365}y" if period_days % 365 == 0 else f"{period_days}d"
-                
-                # Trend emoji
-                trend_emoji = "📈" if trend.get('direction') == 'increasing' else "📉" if trend.get('direction') == 'decreasing' else "➡️"
-                
-                # Volatility color
-                vol_category = volatility.get('category', 'unknown')
-                vol_color = '#28a745' if vol_category == 'low' else '#ffc107' if vol_category == 'medium' else '#dc3545'
-                
-                html_content += f"""
-                                <tr>
-                                    <td><strong>{period_name}</strong></td>
-                                    <td>{valid_market_days}</td>
-                                    <td>${desc_stats.get('mean', 0):.2f}</td>
-                                    <td>${desc_stats.get('min', 0):.2f} - ${desc_stats.get('max', 0):.2f}</td>
-                                    <td>{trend_emoji} {trend.get('direction', 'Unknown').title()}</td>
-                                    <td><span style="color: {vol_color};">{vol_category.title()}</span></td>
-                                </tr>
-                """
-            
-            html_content += """
-                            </tbody>
-                        </table>
-                    </div>
-                    
-                    <div style="margin-top: 20px;">
-                        <a href="/api/spx-straddle/statistics/multi-timeframe" class="btn">📊 View Full Multi-Timeframe Data</a>
-                        <a href="/api/spx-straddle/export/csv?days=720" class="btn">📥 Export 2-Year CSV</a>
-                    </div>
-                </div>
-            """
-        elif stats_data.get('status') == 'success':
-            # Fallback to single timeframe if multi-timeframe fails
-            stats = stats_data.get('descriptive_stats', {})
-            trend = stats_data.get('trend_analysis', {})
-            volatility = stats_data.get('volatility_analysis', {})
-            
-            html_content += f"""
-                <div class="grid">
-                    <div class="card">
-                        <h2>📈 30-Day Statistics</h2>
-                        <div class="metric">
-                            <div class="metric-value">${stats.get('mean', 0):.2f}</div>
-                            <div class="metric-label">Average Cost</div>
-                        </div>
-                        <div class="metric">
-                            <div class="metric-value">${stats.get('median', 0):.2f}</div>
-                            <div class="metric-label">Median Cost</div>
-                        </div>
-                        <div class="metric">
-                            <div class="metric-value">${stats.get('min', 0):.2f} - ${stats.get('max', 0):.2f}</div>
-                            <div class="metric-label">Range</div>
-                        </div>
-                        <div class="metric">
-                            <div class="metric-value">${stats.get('std_dev', 0):.2f}</div>
-                            <div class="metric-label">Std Deviation</div>
-                        </div>
-                    </div>
-                    
-                    <div class="card">
-                        <h2>📊 Analysis</h2>
-                        <p><strong>Trend:</strong> {trend.get('direction', 'Unknown').title()}</p>
-                        <p><strong>Volatility:</strong> {volatility.get('category', 'Unknown').title()} ({volatility.get('coefficient_of_variation', 0):.1f}%)</p>
-                        <p><em>{trend.get('interpretation', '')}</em></p>
-                        <p><em>{volatility.get('interpretation', '')}</em></p>
-                    </div>
-                </div>
-            """
-        
-        # Add recent history table
-        if history_data.get('status') == 'success' and history_data.get('data'):
-            html_content += """
-                <div class="card">
-                    <h2>📅 Recent History (Last 7 Days)</h2>
-                    <table>
-                        <thead>
-                            <tr>
-                                <th>Date</th>
-                                <th>SPX Price</th>
-                                <th>Strike</th>
-                                <th>Call Price</th>
-                                <th>Put Price</th>
-                                <th>Straddle Cost</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-            """
-            
-            for record in history_data.get('data', []):
-                html_content += f"""
-                            <tr>
-                                <td>{record.get('date', 'N/A')}</td>
-                                <td>${record.get('spx_price_930am', 'N/A')}</td>
-                                <td>{record.get('atm_strike', 'N/A')}</td>
-                                <td>${record.get('call_price_931am', 'N/A')}</td>
-                                <td>${record.get('put_price_931am', 'N/A')}</td>
-                                <td>${record.get('straddle_cost', 'N/A')}</td>
-                            </tr>
-                """
-            
-            html_content += """
-                        </tbody>
-                    </table>
-                </div>
-            """
-        
+        # Close the HTML with JavaScript functions
         html_content += """
-                <div class="card">
-                    <h2>📊 Historical Data Backfill</h2>
-                    <p>Backfill historical SPX straddle data for trend and volatility analysis.</p>
-                    
-                    <div class="grid">
-                        <div>
-                            <h3>Quick Scenarios</h3>
-                            <p>Run predefined backfill scenarios:</p>
-                            <button onclick="runBackfill('1week')" class="btn">📅 Last Week</button>
-                            <button onclick="runBackfill('1month')" class="btn">📅 Last Month</button>
-                            <button onclick="runBackfill('3months')" class="btn">📅 Last 3 Months</button>
-                            <button onclick="runBackfill('6months')" class="btn">📅 Last 6 Months</button>
-                            <button onclick="runBackfill('1year')" class="btn">📅 Last Year</button>
-                            <button onclick="runBackfill('2years')" class="btn">📅 Last 2 Years</button>
-                        </div>
-                        <div>
-                            <h3>Custom Date Range</h3>
-                            <p>Specify custom date range:</p>
-                            <input type="date" id="startDate" style="margin: 5px; padding: 8px;">
-                            <input type="date" id="endDate" style="margin: 5px; padding: 8px;">
-                            <br>
-                            <button onclick="runCustomBackfill()" class="btn" style="margin-top: 10px;">🚀 Start Custom Backfill</button>
-                        </div>
-                    </div>
-                    
-                    <div id="backfillStatus" style="margin-top: 15px; padding: 10px; border-radius: 4px; display: none;"></div>
-                    
-                    <script>
-                        async function runBackfill(scenario) {
-                            const statusDiv = document.getElementById('backfillStatus');
-                            statusDiv.style.display = 'block';
-                            statusDiv.style.backgroundColor = '#d1ecf1';
-                            statusDiv.style.color = '#0c5460';
-                            statusDiv.innerHTML = `🔄 Starting ${scenario} backfill...`;
-                            
-                            try {
-                                const response = await fetch(`/api/spx-straddle/backfill/scenario/${scenario}`, {
-                                    method: 'POST'
-                                });
-                                const result = await response.json();
-                                
-                                if (response.ok) {
-                                    statusDiv.style.backgroundColor = '#d4edda';
-                                    statusDiv.style.color = '#155724';
-                                    statusDiv.innerHTML = `✅ ${result.message}<br>Date range: ${result.date_range.start_date} to ${result.date_range.end_date}`;
-                                } else {
-                                    throw new Error(result.detail || 'Unknown error');
-                                }
-                            } catch (error) {
-                                statusDiv.style.backgroundColor = '#f8d7da';
-                                statusDiv.style.color = '#721c24';
-                                statusDiv.innerHTML = `❌ Error: ${error.message}`;
-                            }
-                        }
-                        
-                        async function runCustomBackfill() {
-                            const startDate = document.getElementById('startDate').value;
-                            const endDate = document.getElementById('endDate').value;
-                            const statusDiv = document.getElementById('backfillStatus');
-                            
-                            if (!startDate) {
-                                alert('Please select a start date');
-                                return;
-                            }
-                            
-                            statusDiv.style.display = 'block';
-                            statusDiv.style.backgroundColor = '#d1ecf1';
-                            statusDiv.style.color = '#0c5460';
-                            statusDiv.innerHTML = '🔄 Starting custom backfill...';
-                            
-                            try {
-                                const params = new URLSearchParams({ start_date: startDate });
-                                if (endDate) params.append('end_date', endDate);
-                                
-                                const response = await fetch(`/api/spx-straddle/backfill/custom?${params}`, {
-                                    method: 'POST'
-                                });
-                                const result = await response.json();
-                                
-                                if (response.ok) {
-                                    statusDiv.style.backgroundColor = '#d4edda';
-                                    statusDiv.style.color = '#155724';
-                                    statusDiv.innerHTML = `✅ ${result.message}`;
-                                } else {
-                                    throw new Error(result.detail || 'Unknown error');
-                                }
-                            } catch (error) {
-                                statusDiv.style.backgroundColor = '#f8d7da';
-                                statusDiv.style.color = '#721c24';
-                                statusDiv.innerHTML = `❌ Error: ${error.message}`;
-                            }
-                        }
-                    </script>
-                </div>
                 
-                <div class="card">
-                    <h2>📈 Interactive Charts</h2>
-                    <div class="grid">
-                        <div>
-                            <h3>Chart Controls</h3>
-                            <div style="margin-bottom: 15px;">
-                                <label for="chartPeriod" style="display: block; margin-bottom: 5px; font-weight: bold;">Time Period:</label>
-                                <select id="chartPeriod" style="padding: 8px; margin-right: 10px;">
-                                    <option value="30">30 Days</option>
-                                    <option value="90">3 Months</option>
-                                    <option value="180">6 Months</option>
-                                    <option value="365">1 Year</option>
-                                    <option value="730" selected>2 Years</option>
-                                </select>
-                                <label for="chartType" style="display: block; margin: 10px 0 5px 0; font-weight: bold;">Chart Type:</label>
-                                <select id="chartType" style="padding: 8px; margin-right: 10px;">
-                                    <option value="trend" selected>Trend Analysis</option>
-                                    <option value="comparison">Moving Averages</option>
-                                    <option value="range">Range Analysis</option>
-                                </select>
-                                <br><br>
-                                <button onclick="updateChart()" class="btn">🔄 Update Chart</button>
-                                <button onclick="downloadChart()" class="btn">💾 Download PNG</button>
-                                <button onclick="toggleFullscreen()" class="btn" id="fullscreenBtn">🔍 Fullscreen</button>
-                            </div>
-                        </div>
-                        <div>
-                            <h3>Chart Legend</h3>
-                            <div style="font-size: 0.9em;">
-                                <div style="margin: 5px 0;"><span style="color: #2563eb; font-weight: bold;">━━</span> <strong>Blue Line:</strong> Daily Straddle Cost</div>
-                                <div style="margin: 5px 0;"><span style="color: #dc2626; font-weight: bold;">┅┅</span> <strong>Red Dashed:</strong> Linear Trend Line</div>
-                                <div style="margin: 5px 0;"><span style="color: #16a34a; font-weight: bold;">━━</span> <strong>Green Line:</strong> 7-Day Moving Average</div>
-                                <div style="margin: 5px 0;"><span style="color: #9333ea; font-weight: bold;">━━</span> <strong>Purple Line:</strong> 30-Day Moving Average</div>
-                                <div style="margin: 8px 0 0 0; font-size: 0.8em; color: #666;">💡 <strong>Tip:</strong> Click 🔍 Fullscreen for better visibility</div>
-                            </div>
-                        </div>
-                    </div>
+                <script>
+                    let spxChart = null;
+                    let spyChart = null;
                     
-                    <div style="margin-top: 20px;">
-                        <h3 id="chartTitle">SPX Straddle Cost Trend Analysis</h3>
-                        <div id="chartContainer" style="position: relative; height: 400px; width: 100%; transition: all 0.3s ease;">
-                            <canvas id="straddleChart"></canvas>
-                        </div>
-                        <div id="chartStatus" style="margin-top: 10px; padding: 10px; border-radius: 4px; display: none;"></div>
-                    </div>
-                    
-                    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.js"></script>
-                    <style>
-                        .fullscreen-chart {
-                            position: fixed !important;
-                            top: 0 !important;
-                            left: 0 !important;
-                            width: 100vw !important;
-                            height: 100vh !important;
-                            z-index: 9999 !important;
-                            background: white !important;
-                            padding: 20px !important;
-                            box-sizing: border-box !important;
-                        }
+                    // Asset switching functionality
+                    function switchAsset() {
+                        const dropdown = document.getElementById('assetDropdown');
+                        const selectedAsset = dropdown.value;
                         
-                        .fullscreen-overlay {
-                            position: fixed;
-                            top: 0;
-                            left: 0;
-                            width: 100vw;
-                            height: 100vh;
-                            background: rgba(0,0,0,0.8);
-                            z-index: 9998;
-                            display: none;
-                        }
-                        
-                        .fullscreen-controls {
-                            position: absolute;
-                            top: 10px;
-                            right: 10px;
-                            z-index: 10000;
-                        }
-                        
-                        .fullscreen-controls button {
-                            margin-left: 10px;
-                            padding: 8px 12px;
-                            background: #007bff;
-                            color: white;
-                            border: none;
-                            border-radius: 4px;
-                            cursor: pointer;
-                        }
-                        
-                        .fullscreen-controls button:hover {
-                            background: #0056b3;
-                        }
-                    </style>
-                    
-                    <div class="fullscreen-overlay" id="fullscreenOverlay"></div>
-                    
-                    <script>
-                        let currentChart = null;
-                        let isFullscreen = false;
-                        
-                        // Initialize chart on page load
-                        document.addEventListener('DOMContentLoaded', function() {
-                            updateChart();
-                            
-                            // Add escape key listener for fullscreen
-                            document.addEventListener('keydown', function(e) {
-                                if (e.key === 'Escape' && isFullscreen) {
-                                    toggleFullscreen();
-                                }
-                            });
+                        // Hide all content divs
+                        document.querySelectorAll('.asset-content').forEach(div => {
+                            div.classList.remove('active');
                         });
                         
-                        async function updateChart() {
-                            const period = document.getElementById('chartPeriod').value;
-                            const chartType = document.getElementById('chartType').value;
-                            const statusDiv = document.getElementById('chartStatus');
-                            const titleDiv = document.getElementById('chartTitle');
-                            
-                            // Show loading status
-                            statusDiv.style.display = 'block';
-                            statusDiv.style.backgroundColor = '#d1ecf1';
-                            statusDiv.style.color = '#0c5460';
-                            statusDiv.innerHTML = '🔄 Loading chart data...';
-                            
-                            try {
-                                const response = await fetch(`/api/spx-straddle/chart-config/${chartType}?days=${period}`);
-                                const result = await response.json();
-                                
-                                if (result.status === 'success') {
-                                    // Update title
-                                    const titles = {
-                                        'trend': 'SPX Straddle Cost Trend Analysis',
-                                        'comparison': 'SPX Straddle Cost with Moving Averages',
-                                        'range': 'SPX Straddle Cost Range Analysis'
-                                    };
-                                    titleDiv.textContent = `${titles[chartType]} (${period} days)`;
-                                    
-                                    // Destroy existing chart
-                                    if (currentChart) {
-                                        currentChart.destroy();
-                                    }
-                                    
-                                    // Create new chart
-                                    const ctx = document.getElementById('straddleChart').getContext('2d');
-                                    currentChart = new Chart(ctx, result.config);
-                                    
-                                    // Show success status
-                                    statusDiv.style.backgroundColor = '#d4edda';
-                                    statusDiv.style.color = '#155724';
-                                    statusDiv.innerHTML = `✅ Chart updated with ${result.data_points} data points (${result.date_range.start} to ${result.date_range.end})`;
-                                    
-                                    // Hide status after 3 seconds
-                                    setTimeout(() => {
-                                        statusDiv.style.display = 'none';
-                                    }, 3000);
-                                    
-                                } else {
-                                    throw new Error(result.message || 'Failed to load chart data');
-                                }
-                            } catch (error) {
-                                console.error('Chart error:', error);
-                                statusDiv.style.backgroundColor = '#f8d7da';
-                                statusDiv.style.color = '#721c24';
-                                statusDiv.innerHTML = `❌ Error: ${error.message}`;
-                            }
+                        // Show selected asset content
+                        const targetDiv = document.getElementById(selectedAsset.toLowerCase() + '-content');
+                        if (targetDiv) {
+                            targetDiv.classList.add('active');
                         }
                         
-                        function downloadChart() {
-                            if (currentChart) {
-                                const link = document.createElement('a');
-                                link.download = `spx-straddle-chart-${new Date().toISOString().split('T')[0]}.png`;
-                                link.href = currentChart.toBase64Image();
-                                link.click();
-                            } else {
-                                alert('No chart available to download');
-                            }
+                        // Load chart for selected asset
+                        if (selectedAsset === 'SPX') {
+                            setTimeout(updateSPXChart, 100);
+                        } else if (selectedAsset === 'SPY') {
+                            setTimeout(updateSPYChart, 100);
                         }
+                    }
+                    
+                    // SPX Chart functionality
+                    async function updateSPXChart() {
+                        const days = document.getElementById('spx-time-period').value;
+                        const chartType = document.getElementById('spx-chart-type').value;
                         
-                        function toggleFullscreen() {
-                            const container = document.getElementById('chartContainer');
-                            const overlay = document.getElementById('fullscreenOverlay');
-                            const btn = document.getElementById('fullscreenBtn');
+                        try {
+                            const response = await fetch(`/api/spx-straddle/chart-config/${chartType}?days=${days}`);
+                            const config = await response.json();
                             
-                            if (!isFullscreen) {
-                                // Enter fullscreen
-                                container.classList.add('fullscreen-chart');
-                                overlay.style.display = 'block';
-                                
+                            const ctx = document.getElementById('spx-chart').getContext('2d');
+                            
+                            if (spxChart) {
+                                spxChart.destroy();
+                            }
+                            
+                            spxChart = new Chart(ctx, config);
+                            
+                        } catch (error) {
+                            console.error('Error loading SPX chart:', error);
+                        }
+                    }
+                    
+                    // SPY Chart functionality
+                    async function updateSPYChart() {
+                        const days = document.getElementById('spy-time-period').value;
+                        const chartType = document.getElementById('spy-chart-type').value;
+                        
+                        try {
+                            const response = await fetch(`/api/spy-expected-move/chart-config/${chartType}?days=${days}`);
+                            const config = await response.json();
+                            
+                            const ctx = document.getElementById('spy-chart').getContext('2d');
+                            
+                            if (spyChart) {
+                                spyChart.destroy();
+                            }
+                            
+                            spyChart = new Chart(ctx, config);
+                            
+                        } catch (error) {
+                            console.error('Error loading SPY chart:', error);
+                        }
+                    }
+                    
+                    // Fullscreen functionality
+                    function toggleFullscreen(containerId) {
+                        const container = document.getElementById(containerId);
+                        
+                        if (!document.fullscreenElement) {
+                            container.requestFullscreen().then(() => {
                                 // Add fullscreen controls
-                                if (!document.getElementById('fullscreenControls')) {
-                                    const controls = document.createElement('div');
-                                    controls.id = 'fullscreenControls';
-                                    controls.className = 'fullscreen-controls';
-                                    controls.innerHTML = `
-                                        <button onclick="updateChart()">🔄 Update</button>
-                                        <button onclick="downloadChart()">💾 Download</button>
-                                        <button onclick="toggleFullscreen()">❌ Exit Fullscreen</button>
-                                    `;
-                                    container.appendChild(controls);
-                                }
+                                const controls = document.createElement('div');
+                                controls.id = 'fullscreen-controls';
+                                controls.style.cssText = `
+                                    position: fixed;
+                                    top: 20px;
+                                    right: 20px;
+                                    z-index: 9999;
+                                    background: rgba(0,0,0,0.8);
+                                    color: white;
+                                    padding: 10px;
+                                    border-radius: 8px;
+                                `;
+                                controls.innerHTML = `
+                                    <button onclick="exitFullscreen()" style="background: #dc3545; color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer;">
+                                        ✕ Exit Fullscreen (ESC)
+                                    </button>
+                                `;
+                                container.appendChild(controls);
                                 
-                                btn.textContent = '❌ Exit Fullscreen';
-                                isFullscreen = true;
-                                
-                                // Resize chart to fit fullscreen
-                                if (currentChart) {
-                                    setTimeout(() => {
-                                        currentChart.resize();
-                                    }, 100);
-                                }
-                            } else {
-                                // Exit fullscreen
-                                container.classList.remove('fullscreen-chart');
-                                overlay.style.display = 'none';
-                                
-                                // Remove fullscreen controls
-                                const controls = document.getElementById('fullscreenControls');
-                                if (controls) {
-                                    controls.remove();
-                                }
-                                
-                                btn.textContent = '🔍 Fullscreen';
-                                isFullscreen = false;
-                                
-                                // Resize chart back to normal
-                                if (currentChart) {
-                                    setTimeout(() => {
-                                        currentChart.resize();
-                                    }, 100);
-                                }
-                            }
+                                // Resize chart
+                                setTimeout(() => {
+                                    if (containerId.includes('spx') && spxChart) {
+                                        spxChart.resize();
+                                    } else if (containerId.includes('spy') && spyChart) {
+                                        spyChart.resize();
+                                    }
+                                }, 100);
+                            });
+                        } else {
+                            document.exitFullscreen();
                         }
-                    </script>
-                </div>
-                
-                <div class="card">
-                    <h2>🔗 API Endpoints</h2>
-                    <div class="grid">
-                        <div>
-                            <h3>Data Endpoints</h3>
-                            <ul>
-                                <li><a href="/api/spx-straddle/today">Today's Data</a></li>
-                                <li><a href="/api/spx-straddle/history?days=30">30-Day History</a></li>
-                                <li><a href="/api/spx-straddle/statistics?days=30">30-Day Statistics</a></li>
-                                <li><a href="/api/spx-straddle/statistics/multi-timeframe">Multi-Timeframe Statistics</a></li>
-                                <li><a href="/api/spx-straddle/statistics/full-report">📋 Full Analysis Report (for Gist)</a></li>
-                                <li><a href="/api/spx-straddle/export/csv?days=30">Export CSV</a></li>
-                                <li><a href="/api/spx-straddle/status">System Status</a></li>
-                                <li><a href="/api/spx-straddle/chart-data?days=730">📈 Chart Data API</a></li>
-                                <li><a href="/api/spx-straddle/chart-config/trend?days=730">⚙️ Chart Config API</a></li>
-                            </ul>
-                        </div>
-                        <div>
-                            <h3>Actions</h3>
-                            <ul>
-                                <li><a href="/api/spx-straddle/calculate">Calculate Straddle</a></li>
-                                <li><a href="/api/discord/test">Test Discord</a></li>
-                                <li><a href="/api/discord/notify/today">Notify Discord</a></li>
-                                <li><a href="/api/discord/notify/multi-timeframe">📊 Send Multi-Timeframe to Discord</a></li>
-                                <li><a href="/api/discord/notify/daily-timeframes">⚡ Send Daily Analysis to Discord</a></li>
-                                <li><a href="/api/spx-straddle/statistics/publish-gist">🔗 Publish Analysis to GitHub Gist</a></li>
-                                <li><a href="/docs">API Documentation</a></li>
-                            </ul>
-                        </div>
-                    </div>
-                </div>
-                
-                <div class="card" style="text-align: center; color: #666; font-size: 0.9em;">
-                    <p>SPX 0DTE Straddle Calculator | Powered by Polygon.io | Last updated: {datetime.now(pytz.timezone('US/Eastern')).strftime('%Y-%m-%d %H:%M:%S ET')}</p>
-                </div>
+                    }
+                    
+                    function exitFullscreen() {
+                        if (document.fullscreenElement) {
+                            document.exitFullscreen();
+                        }
+                    }
+                    
+                    // Handle ESC key for fullscreen exit
+                    document.addEventListener('keydown', (e) => {
+                        if (e.key === 'Escape' && document.fullscreenElement) {
+                            exitFullscreen();
+                        }
+                    });
+                    
+                    // Clean up fullscreen controls when exiting
+                    document.addEventListener('fullscreenchange', () => {
+                        if (!document.fullscreenElement) {
+                            const controls = document.getElementById('fullscreen-controls');
+                            if (controls) {
+                                controls.remove();
+                            }
+                            
+                            // Resize charts back to normal
+                            setTimeout(() => {
+                                if (spxChart) spxChart.resize();
+                                if (spyChart) spyChart.resize();
+                            }, 100);
+                        }
+                    });
+                    
+                    // Initialize charts on page load
+                    document.addEventListener('DOMContentLoaded', () => {
+                        // Load SPX chart by default (since SPX is selected by default)
+                        updateSPXChart();
+                    });
+                </script>
             </div>
         </body>
         </html>
@@ -1973,17 +2177,44 @@ async def get_spx_straddle_dashboard():
         return html_content
         
     except Exception as e:
-        logger.error(f"Error generating dashboard: {e}")
+        logger.error(f"Error generating unified dashboard: {e}")
         return f"""
+        <!DOCTYPE html>
         <html>
-        <body style="font-family: Arial, sans-serif; padding: 20px;">
-            <h1>❌ Dashboard Error</h1>
-            <p>Failed to load dashboard: {str(e)}</p>
-            <p><a href="/docs">View API Documentation</a></p>
+        <head>
+            <title>Dashboard Error</title>
+            <meta charset="utf-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1">
+        </head>
+        <body style="font-family: Arial, sans-serif; padding: 20px; background: #f5f5f5;">
+            <div style="background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+                <h1 style="color: #dc3545;">❌ Dashboard Error</h1>
+                <p>An error occurred while loading the dashboard: {str(e)}</p>
+                <p><a href="/api/dashboard" style="color: #007bff;">🔄 Try Again</a></p>
+            </div>
         </body>
         </html>
         """
 
+# Legacy SPX Dashboard endpoint (redirect to unified dashboard)
+@app.get("/api/spx-straddle/dashboard", response_class=HTMLResponse)
+async def get_spx_straddle_dashboard_redirect():
+    """Redirect to unified dashboard for backward compatibility"""
+    return """
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Redirecting...</title>
+        <meta http-equiv="refresh" content="0;url=/api/dashboard">
+    </head>
+    <body>
+        <p>Redirecting to unified dashboard...</p>
+        <p><a href="/api/dashboard">Click here if not redirected automatically</a></p>
+    </body>
+    </html>
+    """
+
+# Run the application
 if __name__ == "__main__":
     import uvicorn
     
