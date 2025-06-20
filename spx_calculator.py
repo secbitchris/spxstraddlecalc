@@ -4,7 +4,7 @@ import logging
 import math
 import pytz
 from datetime import datetime, timedelta, date
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Set
 import redis
 from polygon import RESTClient
 import os
@@ -25,6 +25,7 @@ class SPXStraddleCalculator:
     - Option price fetching at 9:31 AM ET
     - Straddle cost computation
     - Historical data storage and analysis
+    - Market day validation
     """
     
     def __init__(self, polygon_api_key: str, redis_url: str = "redis://localhost:6379"):
@@ -54,6 +55,154 @@ class SPXStraddleCalculator:
             'options_price_timestamp': None,
             'last_calculation_date': None
         }
+        
+        # Initialize market holidays cache
+        self._market_holidays = self._get_market_holidays()
+    
+    def _get_market_holidays(self) -> Set[date]:
+        """
+        Get set of major US market holidays
+        
+        Returns:
+            Set of dates that are market holidays
+        """
+        # Major US market holidays (approximate - covers most important ones)
+        holidays_2024 = {
+            date(2024, 1, 1),   # New Year's Day
+            date(2024, 1, 15),  # MLK Day
+            date(2024, 2, 19),  # Presidents Day
+            date(2024, 3, 29),  # Good Friday
+            date(2024, 5, 27),  # Memorial Day
+            date(2024, 6, 19),  # Juneteenth
+            date(2024, 7, 4),   # Independence Day
+            date(2024, 9, 2),   # Labor Day
+            date(2024, 11, 28), # Thanksgiving
+            date(2024, 12, 25), # Christmas
+        }
+        
+        holidays_2025 = {
+            date(2025, 1, 1),   # New Year's Day
+            date(2025, 1, 20),  # MLK Day
+            date(2025, 2, 17),  # Presidents Day
+            date(2025, 4, 18),  # Good Friday
+            date(2025, 5, 26),  # Memorial Day
+            date(2025, 6, 19),  # Juneteenth
+            date(2025, 7, 4),   # Independence Day
+            date(2025, 9, 1),   # Labor Day
+            date(2025, 11, 27), # Thanksgiving
+            date(2025, 12, 25), # Christmas
+        }
+        
+        holidays_2026 = {
+            date(2026, 1, 1),   # New Year's Day
+            date(2026, 1, 19),  # MLK Day
+            date(2026, 2, 16),  # Presidents Day
+            date(2026, 4, 3),   # Good Friday
+            date(2026, 5, 25),  # Memorial Day
+            date(2026, 6, 19),  # Juneteenth
+            date(2026, 7, 4),   # Independence Day
+            date(2026, 9, 7),   # Labor Day
+            date(2026, 11, 26), # Thanksgiving
+            date(2026, 12, 25), # Christmas
+        }
+        
+        return holidays_2024.union(holidays_2025).union(holidays_2026)
+    
+    def is_valid_market_day(self, target_date: date) -> bool:
+        """
+        Check if a given date is a valid market trading day
+        
+        A valid market day is:
+        - Monday through Friday (weekdays)
+        - Not a major US market holiday
+        
+        Args:
+            target_date: Date to check
+            
+        Returns:
+            True if the date is a valid trading day, False otherwise
+        """
+        try:
+            # Check if it's a weekend (Saturday=5, Sunday=6)
+            if target_date.weekday() >= 5:
+                logger.debug(f"Date {target_date} is a weekend (weekday: {target_date.weekday()})")
+                return False
+            
+            # Check if it's a market holiday
+            if target_date in self._market_holidays:
+                logger.debug(f"Date {target_date} is a market holiday")
+                return False
+            
+            # Check if it's in the future beyond today
+            et_tz = pytz.timezone('US/Eastern')
+            today = datetime.now(et_tz).date()
+            if target_date > today:
+                logger.debug(f"Date {target_date} is in the future beyond today ({today})")
+                return False
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error checking if {target_date} is a valid market day: {e}")
+            return False
+    
+    def get_next_market_day(self, start_date: date = None) -> Optional[date]:
+        """
+        Get the next valid market day from a given date
+        
+        Args:
+            start_date: Date to start searching from (defaults to today)
+            
+        Returns:
+            Next valid market day or None if not found within reasonable range
+        """
+        try:
+            et_tz = pytz.timezone('US/Eastern')
+            if start_date is None:
+                start_date = datetime.now(et_tz).date()
+            
+            current_date = start_date
+            # Search up to 30 days ahead to find next market day
+            for _ in range(30):
+                if self.is_valid_market_day(current_date):
+                    return current_date
+                current_date += timedelta(days=1)
+            
+            logger.warning(f"No valid market day found within 30 days from {start_date}")
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error finding next market day from {start_date}: {e}")
+            return None
+    
+    def get_previous_market_day(self, start_date: date = None) -> Optional[date]:
+        """
+        Get the previous valid market day from a given date
+        
+        Args:
+            start_date: Date to start searching from (defaults to today)
+            
+        Returns:
+            Previous valid market day or None if not found within reasonable range
+        """
+        try:
+            et_tz = pytz.timezone('US/Eastern')
+            if start_date is None:
+                start_date = datetime.now(et_tz).date()
+            
+            current_date = start_date
+            # Search up to 30 days back to find previous market day
+            for _ in range(30):
+                if self.is_valid_market_day(current_date):
+                    return current_date
+                current_date -= timedelta(days=1)
+            
+            logger.warning(f"No valid market day found within 30 days before {start_date}")
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error finding previous market day from {start_date}: {e}")
+            return None
     
     async def initialize(self):
         """Initialize Redis connection"""
@@ -265,10 +414,11 @@ class SPXStraddleCalculator:
         Calculate SPX 0DTE straddle cost
         
         Orchestrates the calculation by:
-        1. Fetching SPX price at 9:30 AM ET
-        2. Calculating ATM strike
-        3. Fetching call and put prices at 9:31 AM ET
-        4. Computing straddle cost
+        1. Validating the target date is a valid market day
+        2. Fetching SPX price at 9:30 AM ET
+        3. Calculating ATM strike
+        4. Fetching call and put prices at 9:31 AM ET
+        5. Computing straddle cost
         
         Args:
             target_date: Date to calculate for (defaults to today)
@@ -281,12 +431,27 @@ class SPXStraddleCalculator:
             if target_date is None:
                 target_date = datetime.now(et_tz).date()
             
+            # Step 0: Validate that the target date is a valid market day
+            if not self.is_valid_market_day(target_date):
+                error_msg = f"Invalid market day: {target_date} (weekend, holiday, or future date)"
+                logger.warning(f"[SPX_STRADDLE] {error_msg}")
+                self.spx_straddle_data['calculation_status'] = 'error'
+                self.spx_straddle_data['error_message'] = error_msg
+                self.spx_straddle_data['timestamp'] = datetime.now(et_tz).isoformat()
+                return {
+                    'error': error_msg,
+                    'target_date': target_date.isoformat(),
+                    'is_weekend': target_date.weekday() >= 5,
+                    'is_holiday': target_date in self._market_holidays,
+                    'is_future': target_date > datetime.now(et_tz).date()
+                }
+            
             # Update calculation status
             self.spx_straddle_data['calculation_status'] = 'calculating'
             self.spx_straddle_data['timestamp'] = datetime.now(et_tz).isoformat()
             self.spx_straddle_data['error_message'] = None
             
-            logger.info(f"[SPX_STRADDLE] Starting straddle cost calculation for {target_date}")
+            logger.info(f"[SPX_STRADDLE] Starting straddle cost calculation for {target_date} (valid market day)")
             
             # Step 1: Get SPX price at 9:30 AM
             spx_price_930 = await self.get_spx_price_at_930am(target_date)

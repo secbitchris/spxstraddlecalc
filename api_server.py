@@ -159,6 +159,43 @@ async def get_spx_straddle_statistics(days: int = 30):
         logger.error(f"Error getting straddle statistics: {e}")
         raise HTTPException(status_code=500, detail="Failed to retrieve SPX straddle statistics")
 
+# Quick access endpoints for daily timeframes
+@app.get("/api/spx-straddle/statistics/daily")
+async def get_daily_timeframes_summary():
+    """Get summary of all daily timeframes (1D-7D) for quick access"""
+    try:
+        daily_results = {}
+        
+        for days in [1, 2, 3, 4, 5, 6, 7]:
+            try:
+                stats = await calculator.calculate_spx_straddle_statistics(days)
+                if stats.get('status') == 'success':
+                    daily_results[f"{days}d"] = {
+                        "period_days": days,
+                        "data_points": stats.get('data_points', 0),
+                        "mean_cost": stats.get('descriptive_stats', {}).get('mean', 0),
+                        "median_cost": stats.get('descriptive_stats', {}).get('median', 0),
+                        "std_dev": stats.get('descriptive_stats', {}).get('std_dev', 0),
+                        "trend_direction": stats.get('trend_analysis', {}).get('direction', 'unknown'),
+                        "volatility_category": stats.get('volatility_analysis', {}).get('category', 'unknown'),
+                        "min_cost": stats.get('descriptive_stats', {}).get('min', 0),
+                        "max_cost": stats.get('descriptive_stats', {}).get('max', 0)
+                    }
+            except Exception as e:
+                logger.warning(f"Failed to get {days}D statistics: {e}")
+                continue
+        
+        return {
+            "status": "success",
+            "daily_timeframes": daily_results,
+            "available_periods": list(daily_results.keys()),
+            "timestamp": datetime.now(pytz.timezone('US/Eastern')).isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting daily timeframes summary: {e}")
+        raise HTTPException(status_code=500, detail="Failed to retrieve daily timeframes summary")
+
 @app.get("/api/spx-straddle/statistics/multi-timeframe")
 async def get_multi_timeframe_statistics():
     """Get SPX straddle statistics across multiple timeframes"""
@@ -194,7 +231,8 @@ async def get_multi_timeframe_statistics():
             try:
                 stats = await calculator.calculate_spx_straddle_statistics(days)
                 
-                if stats.get('status') == 'success' and stats.get('data_points', 0) >= 5:
+                # Show all timeframes regardless of data points - we want to see running trends
+                if stats.get('status') == 'success' and stats.get('data_points', 0) > 0:
                     # Determine timeframe key (YTD gets special treatment)
                     if days == ytd_days:
                         timeframe_key = "ytd"
@@ -561,6 +599,519 @@ async def get_spx_straddle_status():
             "error": str(e),
             "timestamp": datetime.now(pytz.timezone('US/Eastern')).isoformat()
         }
+
+# Chart data endpoints
+@app.get("/api/spx-straddle/chart-data")
+async def get_chart_data(days: int = 730, timeframe: str = "daily"):
+    """
+    Get chart data for SPX straddle trends
+    
+    Args:
+        days: Number of days of historical data (default 730 = ~2 years)
+        timeframe: Chart timeframe - 'daily', 'weekly', 'monthly'
+    """
+    try:
+        # Get historical data
+        history = await calculator.get_spx_straddle_history(days)
+        
+        if history.get('status') != 'success' or not history.get('data'):
+            return {
+                "status": "no_data",
+                "message": "No historical data available for charting",
+                "days_requested": days
+            }
+        
+        data_points = history['data']
+        
+        # Process data for charting
+        chart_data = _process_chart_data(data_points, timeframe)
+        
+        # Calculate trend line using linear regression
+        trend_line = _calculate_trend_line(chart_data['costs']) if chart_data['costs'] else []
+        
+        # Calculate moving averages
+        ma_7 = _calculate_moving_average(chart_data['costs'], 7) if len(chart_data['costs']) >= 7 else []
+        ma_30 = _calculate_moving_average(chart_data['costs'], 30) if len(chart_data['costs']) >= 30 else []
+        
+        return {
+            "status": "success",
+            "timeframe": timeframe,
+            "days_requested": days,
+            "data_points": len(chart_data['dates']),
+            "date_range": {
+                "start": chart_data['dates'][0] if chart_data['dates'] else None,
+                "end": chart_data['dates'][-1] if chart_data['dates'] else None
+            },
+            "chart_data": {
+                "dates": chart_data['dates'],
+                "costs": chart_data['costs'],
+                "trend_line": trend_line,
+                "moving_averages": {
+                    "ma_7": ma_7,
+                    "ma_30": ma_30
+                },
+                "statistics": {
+                    "min": min(chart_data['costs']) if chart_data['costs'] else 0,
+                    "max": max(chart_data['costs']) if chart_data['costs'] else 0,
+                    "mean": sum(chart_data['costs']) / len(chart_data['costs']) if chart_data['costs'] else 0,
+                    "range_low": [min(chart_data['costs'])] * len(chart_data['dates']) if chart_data['costs'] else [],
+                    "range_high": [max(chart_data['costs'])] * len(chart_data['dates']) if chart_data['costs'] else []
+                }
+            }
+        }
+        
+    except Exception as e:
+        logger.error(f"Error generating chart data: {e}")
+        raise HTTPException(status_code=500, detail="Failed to generate chart data")
+
+@app.get("/api/spx-straddle/chart-config/{chart_type}")
+async def get_chart_config(chart_type: str, days: int = 730):
+    """
+    Get Chart.js configuration for different chart types
+    
+    Args:
+        chart_type: 'trend', 'comparison', 'volatility', 'range'
+        days: Historical data period
+    """
+    try:
+        # Get chart data
+        chart_data_response = await get_chart_data(days, "daily")
+        
+        if chart_data_response.get('status') != 'success':
+            return chart_data_response
+        
+        chart_data = chart_data_response['chart_data']
+        
+        base_config = {
+            "type": "line",
+            "options": {
+                "responsive": True,
+                "maintainAspectRatio": False,
+                "scales": {
+                    "x": {
+                        "title": {
+                            "display": True,
+                            "text": "Date"
+                        }
+                    },
+                    "y": {
+                        "title": {
+                            "display": True,
+                            "text": "Straddle Cost ($)"
+                        },
+                        "beginAtZero": False
+                    }
+                },
+                "plugins": {
+                    "legend": {
+                        "display": True,
+                        "position": "top"
+                    },
+                    "tooltip": {
+                        "mode": "index",
+                        "intersect": False
+                    }
+                },
+                "interaction": {
+                    "mode": "nearest",
+                    "axis": "x",
+                    "intersect": False
+                }
+            }
+        }
+        
+        datasets = []
+        
+        if chart_type == "trend":
+            datasets = [
+                {
+                    "label": "Straddle Cost",
+                    "data": [{"x": chart_data['dates'][i], "y": chart_data['costs'][i]} for i in range(len(chart_data['dates']))],
+                    "borderColor": "rgb(37, 99, 235)",
+                    "backgroundColor": "rgba(37, 99, 235, 0.1)",
+                    "borderWidth": 2,
+                    "fill": False,
+                    "tension": 0.1,
+                    "pointRadius": 1,
+                    "pointHoverRadius": 4
+                },
+                {
+                    "label": "Trend Line",
+                    "data": [{"x": chart_data['dates'][i], "y": chart_data['trend_line'][i]} for i in range(len(chart_data['trend_line']))],
+                    "borderColor": "rgb(220, 38, 38)",
+                    "backgroundColor": "transparent",
+                    "borderDash": [8, 4],
+                    "borderWidth": 3,
+                    "fill": False,
+                    "pointRadius": 0,
+                    "tension": 0
+                }
+            ]
+        elif chart_type == "comparison":
+            datasets = [
+                {
+                    "label": "Straddle Cost",
+                    "data": [{"x": chart_data['dates'][i], "y": chart_data['costs'][i]} for i in range(len(chart_data['dates']))],
+                    "borderColor": "rgb(37, 99, 235)",
+                    "backgroundColor": "rgba(37, 99, 235, 0.1)",
+                    "borderWidth": 2,
+                    "fill": False,
+                    "tension": 0.1,
+                    "pointRadius": 1,
+                    "pointHoverRadius": 4
+                }
+            ]
+            
+            if chart_data['moving_averages']['ma_7']:
+                datasets.append({
+                    "label": "7-Day MA",
+                    "data": [{"x": chart_data['dates'][i], "y": chart_data['moving_averages']['ma_7'][i]} for i in range(len(chart_data['moving_averages']['ma_7']))],
+                    "borderColor": "rgb(22, 163, 74)",
+                    "backgroundColor": "transparent",
+                    "borderWidth": 2,
+                    "fill": False,
+                    "pointRadius": 0,
+                    "tension": 0.2
+                })
+            
+            if chart_data['moving_averages']['ma_30']:
+                datasets.append({
+                    "label": "30-Day MA",
+                    "data": [{"x": chart_data['dates'][i], "y": chart_data['moving_averages']['ma_30'][i]} for i in range(len(chart_data['moving_averages']['ma_30']))],
+                    "borderColor": "rgb(147, 51, 234)",
+                    "backgroundColor": "transparent",
+                    "borderWidth": 2,
+                    "fill": False,
+                    "pointRadius": 0,
+                    "tension": 0.2
+                })
+        elif chart_type == "range":
+            datasets = [
+                {
+                    "label": "Straddle Cost",
+                    "data": [{"x": chart_data['dates'][i], "y": chart_data['costs'][i]} for i in range(len(chart_data['dates']))],
+                    "borderColor": "rgb(37, 99, 235)",
+                    "backgroundColor": "rgba(37, 99, 235, 0.2)",
+                    "borderWidth": 2,
+                    "fill": False,
+                    "tension": 0.1,
+                    "pointRadius": 1,
+                    "pointHoverRadius": 4
+                },
+                {
+                    "label": f"Range (${chart_data['statistics']['min']:.2f} - ${chart_data['statistics']['max']:.2f})",
+                    "data": [
+                        {"x": chart_data['dates'][0], "y": chart_data['statistics']['min']},
+                        {"x": chart_data['dates'][-1], "y": chart_data['statistics']['min']}
+                    ],
+                    "borderColor": "rgba(239, 68, 68, 0.5)",
+                    "backgroundColor": "transparent",
+                    "borderDash": [3, 3],
+                    "fill": False,
+                    "pointRadius": 0
+                },
+                {
+                    "label": "",
+                    "data": [
+                        {"x": chart_data['dates'][0], "y": chart_data['statistics']['max']},
+                        {"x": chart_data['dates'][-1], "y": chart_data['statistics']['max']}
+                    ],
+                    "borderColor": "rgba(239, 68, 68, 0.5)",
+                    "backgroundColor": "transparent",
+                    "borderDash": [3, 3],
+                    "fill": False,
+                    "pointRadius": 0
+                }
+            ]
+        else:
+            raise HTTPException(status_code=400, detail="Invalid chart type. Use 'trend', 'comparison', or 'range'")
+        
+        config = {
+            **base_config,
+            "data": {
+                "datasets": datasets
+            }
+        }
+        
+        return {
+            "status": "success",
+            "chart_type": chart_type,
+            "config": config,
+            "data_points": len(chart_data['dates']),
+            "date_range": chart_data_response['date_range']
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error generating chart config: {e}")
+        raise HTTPException(status_code=500, detail="Failed to generate chart configuration")
+
+# Helper functions for chart data processing
+def _process_chart_data(data_points, timeframe):
+    """Process raw data points for charting"""
+    if timeframe == "daily":
+        # Return data as-is for daily charts
+        dates = [point.get('date', '') for point in data_points]
+        costs = [point.get('straddle_cost', 0) for point in data_points]
+        return {"dates": dates, "costs": costs}
+    elif timeframe == "weekly":
+        # Group by week (simplified - could be enhanced)
+        return _group_data_by_week(data_points)
+    elif timeframe == "monthly":
+        # Group by month (simplified - could be enhanced)
+        return _group_data_by_month(data_points)
+    else:
+        # Default to daily
+        dates = [point.get('date', '') for point in data_points]
+        costs = [point.get('straddle_cost', 0) for point in data_points]
+        return {"dates": dates, "costs": costs}
+
+def _group_data_by_week(data_points):
+    """Group data points by week"""
+    # Simplified weekly grouping - average costs per week
+    weekly_data = {}
+    for point in data_points:
+        date_str = point.get('date', '')
+        if date_str:
+            # Get week start date (Monday)
+            date_obj = datetime.strptime(date_str, '%Y-%m-%d').date()
+            week_start = date_obj - timedelta(days=date_obj.weekday())
+            week_key = week_start.strftime('%Y-%m-%d')
+            
+            if week_key not in weekly_data:
+                weekly_data[week_key] = []
+            weekly_data[week_key].append(point.get('straddle_cost', 0))
+    
+    # Calculate averages
+    dates = sorted(weekly_data.keys())
+    costs = [sum(weekly_data[week]) / len(weekly_data[week]) for week in dates]
+    
+    return {"dates": dates, "costs": costs}
+
+def _group_data_by_month(data_points):
+    """Group data points by month"""
+    # Simplified monthly grouping - average costs per month
+    monthly_data = {}
+    for point in data_points:
+        date_str = point.get('date', '')
+        if date_str:
+            # Get month start date
+            date_obj = datetime.strptime(date_str, '%Y-%m-%d').date()
+            month_key = date_obj.strftime('%Y-%m-01')
+            
+            if month_key not in monthly_data:
+                monthly_data[month_key] = []
+            monthly_data[month_key].append(point.get('straddle_cost', 0))
+    
+    # Calculate averages
+    dates = sorted(monthly_data.keys())
+    costs = [sum(monthly_data[month]) / len(monthly_data[month]) for month in dates]
+    
+    return {"dates": dates, "costs": costs}
+
+def _calculate_trend_line(costs):
+    """Calculate linear trend line using simple linear regression"""
+    if len(costs) < 2:
+        return costs
+    
+    n = len(costs)
+    x_values = list(range(n))
+    x_mean = sum(x_values) / n
+    y_mean = sum(costs) / n
+    
+    # Calculate slope
+    numerator = sum((x_values[i] - x_mean) * (costs[i] - y_mean) for i in range(n))
+    denominator = sum((x - x_mean) ** 2 for x in x_values)
+    
+    if denominator == 0:
+        return costs
+    
+    slope = numerator / denominator
+    intercept = y_mean - slope * x_mean
+    
+    # Generate trend line points
+    trend_line = [slope * x + intercept for x in x_values]
+    return trend_line
+
+def _calculate_moving_average(costs, window):
+    """Calculate moving average"""
+    if len(costs) < window:
+        return []
+    
+    moving_avg = []
+    for i in range(len(costs)):
+        if i < window - 1:
+            # Pad with None for the beginning
+            moving_avg.append(None)
+        else:
+            avg = sum(costs[i - window + 1:i + 1]) / window
+            moving_avg.append(avg)
+    
+    return moving_avg
+
+# Market day validation endpoints
+@app.get("/api/market-days/validate/{date_str}")
+async def validate_market_day(date_str: str):
+    """
+    Validate if a specific date is a valid market day
+    
+    Args:
+        date_str: Date in YYYY-MM-DD format
+    """
+    try:
+        # Parse date string
+        target_date = datetime.strptime(date_str, '%Y-%m-%d').date()
+        
+        # Validate market day
+        is_valid = calculator.is_valid_market_day(target_date)
+        
+        et_tz = pytz.timezone('US/Eastern')
+        today = datetime.now(et_tz).date()
+        
+        return {
+            "date": date_str,
+            "is_valid_market_day": is_valid,
+            "day_of_week": target_date.strftime('%A'),
+            "weekday_number": target_date.weekday(),
+            "is_weekend": target_date.weekday() >= 5,
+            "is_holiday": target_date in calculator._market_holidays,
+            "is_future": target_date > today,
+            "is_today": target_date == today,
+            "reason": _get_market_day_reason(target_date, calculator._market_holidays, today)
+        }
+        
+    except ValueError as e:
+        raise HTTPException(
+            status_code=400, 
+            detail=f"Invalid date format. Use YYYY-MM-DD format. Error: {str(e)}"
+        )
+    except Exception as e:
+        logger.error(f"Error validating market day {date_str}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to validate market day")
+
+@app.get("/api/market-days/next")
+async def get_next_market_day(from_date: str = None):
+    """
+    Get the next valid market day from a given date or today
+    
+    Args:
+        from_date: Optional date in YYYY-MM-DD format (defaults to today)
+    """
+    try:
+        if from_date:
+            start_date = datetime.strptime(from_date, '%Y-%m-%d').date()
+        else:
+            et_tz = pytz.timezone('US/Eastern')
+            start_date = datetime.now(et_tz).date()
+        
+        next_market_day = calculator.get_next_market_day(start_date)
+        
+        if next_market_day is None:
+            raise HTTPException(
+                status_code=404, 
+                detail=f"No valid market day found within 30 days from {start_date}"
+            )
+        
+        return {
+            "from_date": start_date.isoformat(),
+            "next_market_day": next_market_day.isoformat(),
+            "days_ahead": (next_market_day - start_date).days,
+            "day_of_week": next_market_day.strftime('%A')
+        }
+        
+    except ValueError as e:
+        raise HTTPException(
+            status_code=400, 
+            detail=f"Invalid date format. Use YYYY-MM-DD format. Error: {str(e)}"
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting next market day: {e}")
+        raise HTTPException(status_code=500, detail="Failed to get next market day")
+
+@app.get("/api/market-days/previous")
+async def get_previous_market_day(from_date: str = None):
+    """
+    Get the previous valid market day from a given date or today
+    
+    Args:
+        from_date: Optional date in YYYY-MM-DD format (defaults to today)
+    """
+    try:
+        if from_date:
+            start_date = datetime.strptime(from_date, '%Y-%m-%d').date()
+        else:
+            et_tz = pytz.timezone('US/Eastern')
+            start_date = datetime.now(et_tz).date()
+        
+        previous_market_day = calculator.get_previous_market_day(start_date)
+        
+        if previous_market_day is None:
+            raise HTTPException(
+                status_code=404, 
+                detail=f"No valid market day found within 30 days before {start_date}"
+            )
+        
+        return {
+            "from_date": start_date.isoformat(),
+            "previous_market_day": previous_market_day.isoformat(),
+            "days_back": (start_date - previous_market_day).days,
+            "day_of_week": previous_market_day.strftime('%A')
+        }
+        
+    except ValueError as e:
+        raise HTTPException(
+            status_code=400, 
+            detail=f"Invalid date format. Use YYYY-MM-DD format. Error: {str(e)}"
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting previous market day: {e}")
+        raise HTTPException(status_code=500, detail="Failed to get previous market day")
+
+@app.get("/api/market-days/holidays")
+async def get_market_holidays():
+    """Get list of market holidays"""
+    try:
+        holidays_list = sorted(list(calculator._market_holidays))
+        
+        # Group by year for better organization
+        holidays_by_year = {}
+        for holiday in holidays_list:
+            year = holiday.year
+            if year not in holidays_by_year:
+                holidays_by_year[year] = []
+            holidays_by_year[year].append({
+                "date": holiday.isoformat(),
+                "day_of_week": holiday.strftime('%A')
+            })
+        
+        return {
+            "total_holidays": len(holidays_list),
+            "date_range": {
+                "start": holidays_list[0].isoformat() if holidays_list else None,
+                "end": holidays_list[-1].isoformat() if holidays_list else None
+            },
+            "holidays_by_year": holidays_by_year
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting market holidays: {e}")
+        raise HTTPException(status_code=500, detail="Failed to get market holidays")
+
+def _get_market_day_reason(target_date: date, holidays: set, today: date) -> str:
+    """Helper function to get reason why a date is/isn't a valid market day"""
+    if target_date.weekday() >= 5:
+        return f"Weekend ({target_date.strftime('%A')})"
+    elif target_date in holidays:
+        return "Market holiday"
+    elif target_date > today:
+        return "Future date"
+    else:
+        return "Valid market day"
 
 # Discord notification endpoints
 @app.post("/api/discord/test")
@@ -1146,6 +1697,240 @@ async def get_spx_straddle_dashboard():
                 </div>
                 
                 <div class="card">
+                    <h2>📈 Interactive Charts</h2>
+                    <div class="grid">
+                        <div>
+                            <h3>Chart Controls</h3>
+                            <div style="margin-bottom: 15px;">
+                                <label for="chartPeriod" style="display: block; margin-bottom: 5px; font-weight: bold;">Time Period:</label>
+                                <select id="chartPeriod" style="padding: 8px; margin-right: 10px;">
+                                    <option value="30">30 Days</option>
+                                    <option value="90">3 Months</option>
+                                    <option value="180">6 Months</option>
+                                    <option value="365">1 Year</option>
+                                    <option value="730" selected>2 Years</option>
+                                </select>
+                                <label for="chartType" style="display: block; margin: 10px 0 5px 0; font-weight: bold;">Chart Type:</label>
+                                <select id="chartType" style="padding: 8px; margin-right: 10px;">
+                                    <option value="trend" selected>Trend Analysis</option>
+                                    <option value="comparison">Moving Averages</option>
+                                    <option value="range">Range Analysis</option>
+                                </select>
+                                <br><br>
+                                <button onclick="updateChart()" class="btn">🔄 Update Chart</button>
+                                <button onclick="downloadChart()" class="btn">💾 Download PNG</button>
+                                <button onclick="toggleFullscreen()" class="btn" id="fullscreenBtn">🔍 Fullscreen</button>
+                            </div>
+                        </div>
+                        <div>
+                            <h3>Chart Legend</h3>
+                            <div style="font-size: 0.9em;">
+                                <div style="margin: 5px 0;"><span style="color: #2563eb; font-weight: bold;">━━</span> <strong>Blue Line:</strong> Daily Straddle Cost</div>
+                                <div style="margin: 5px 0;"><span style="color: #dc2626; font-weight: bold;">┅┅</span> <strong>Red Dashed:</strong> Linear Trend Line</div>
+                                <div style="margin: 5px 0;"><span style="color: #16a34a; font-weight: bold;">━━</span> <strong>Green Line:</strong> 7-Day Moving Average</div>
+                                <div style="margin: 5px 0;"><span style="color: #9333ea; font-weight: bold;">━━</span> <strong>Purple Line:</strong> 30-Day Moving Average</div>
+                                <div style="margin: 8px 0 0 0; font-size: 0.8em; color: #666;">💡 <strong>Tip:</strong> Click 🔍 Fullscreen for better visibility</div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div style="margin-top: 20px;">
+                        <h3 id="chartTitle">SPX Straddle Cost Trend Analysis</h3>
+                        <div id="chartContainer" style="position: relative; height: 400px; width: 100%; transition: all 0.3s ease;">
+                            <canvas id="straddleChart"></canvas>
+                        </div>
+                        <div id="chartStatus" style="margin-top: 10px; padding: 10px; border-radius: 4px; display: none;"></div>
+                    </div>
+                    
+                    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.js"></script>
+                    <style>
+                        .fullscreen-chart {
+                            position: fixed !important;
+                            top: 0 !important;
+                            left: 0 !important;
+                            width: 100vw !important;
+                            height: 100vh !important;
+                            z-index: 9999 !important;
+                            background: white !important;
+                            padding: 20px !important;
+                            box-sizing: border-box !important;
+                        }
+                        
+                        .fullscreen-overlay {
+                            position: fixed;
+                            top: 0;
+                            left: 0;
+                            width: 100vw;
+                            height: 100vh;
+                            background: rgba(0,0,0,0.8);
+                            z-index: 9998;
+                            display: none;
+                        }
+                        
+                        .fullscreen-controls {
+                            position: absolute;
+                            top: 10px;
+                            right: 10px;
+                            z-index: 10000;
+                        }
+                        
+                        .fullscreen-controls button {
+                            margin-left: 10px;
+                            padding: 8px 12px;
+                            background: #007bff;
+                            color: white;
+                            border: none;
+                            border-radius: 4px;
+                            cursor: pointer;
+                        }
+                        
+                        .fullscreen-controls button:hover {
+                            background: #0056b3;
+                        }
+                    </style>
+                    
+                    <div class="fullscreen-overlay" id="fullscreenOverlay"></div>
+                    
+                    <script>
+                        let currentChart = null;
+                        let isFullscreen = false;
+                        
+                        // Initialize chart on page load
+                        document.addEventListener('DOMContentLoaded', function() {
+                            updateChart();
+                            
+                            // Add escape key listener for fullscreen
+                            document.addEventListener('keydown', function(e) {
+                                if (e.key === 'Escape' && isFullscreen) {
+                                    toggleFullscreen();
+                                }
+                            });
+                        });
+                        
+                        async function updateChart() {
+                            const period = document.getElementById('chartPeriod').value;
+                            const chartType = document.getElementById('chartType').value;
+                            const statusDiv = document.getElementById('chartStatus');
+                            const titleDiv = document.getElementById('chartTitle');
+                            
+                            // Show loading status
+                            statusDiv.style.display = 'block';
+                            statusDiv.style.backgroundColor = '#d1ecf1';
+                            statusDiv.style.color = '#0c5460';
+                            statusDiv.innerHTML = '🔄 Loading chart data...';
+                            
+                            try {
+                                const response = await fetch(`/api/spx-straddle/chart-config/${chartType}?days=${period}`);
+                                const result = await response.json();
+                                
+                                if (result.status === 'success') {
+                                    // Update title
+                                    const titles = {
+                                        'trend': 'SPX Straddle Cost Trend Analysis',
+                                        'comparison': 'SPX Straddle Cost with Moving Averages',
+                                        'range': 'SPX Straddle Cost Range Analysis'
+                                    };
+                                    titleDiv.textContent = `${titles[chartType]} (${period} days)`;
+                                    
+                                    // Destroy existing chart
+                                    if (currentChart) {
+                                        currentChart.destroy();
+                                    }
+                                    
+                                    // Create new chart
+                                    const ctx = document.getElementById('straddleChart').getContext('2d');
+                                    currentChart = new Chart(ctx, result.config);
+                                    
+                                    // Show success status
+                                    statusDiv.style.backgroundColor = '#d4edda';
+                                    statusDiv.style.color = '#155724';
+                                    statusDiv.innerHTML = `✅ Chart updated with ${result.data_points} data points (${result.date_range.start} to ${result.date_range.end})`;
+                                    
+                                    // Hide status after 3 seconds
+                                    setTimeout(() => {
+                                        statusDiv.style.display = 'none';
+                                    }, 3000);
+                                    
+                                } else {
+                                    throw new Error(result.message || 'Failed to load chart data');
+                                }
+                            } catch (error) {
+                                console.error('Chart error:', error);
+                                statusDiv.style.backgroundColor = '#f8d7da';
+                                statusDiv.style.color = '#721c24';
+                                statusDiv.innerHTML = `❌ Error: ${error.message}`;
+                            }
+                        }
+                        
+                        function downloadChart() {
+                            if (currentChart) {
+                                const link = document.createElement('a');
+                                link.download = `spx-straddle-chart-${new Date().toISOString().split('T')[0]}.png`;
+                                link.href = currentChart.toBase64Image();
+                                link.click();
+                            } else {
+                                alert('No chart available to download');
+                            }
+                        }
+                        
+                        function toggleFullscreen() {
+                            const container = document.getElementById('chartContainer');
+                            const overlay = document.getElementById('fullscreenOverlay');
+                            const btn = document.getElementById('fullscreenBtn');
+                            
+                            if (!isFullscreen) {
+                                // Enter fullscreen
+                                container.classList.add('fullscreen-chart');
+                                overlay.style.display = 'block';
+                                
+                                // Add fullscreen controls
+                                if (!document.getElementById('fullscreenControls')) {
+                                    const controls = document.createElement('div');
+                                    controls.id = 'fullscreenControls';
+                                    controls.className = 'fullscreen-controls';
+                                    controls.innerHTML = `
+                                        <button onclick="updateChart()">🔄 Update</button>
+                                        <button onclick="downloadChart()">💾 Download</button>
+                                        <button onclick="toggleFullscreen()">❌ Exit Fullscreen</button>
+                                    `;
+                                    container.appendChild(controls);
+                                }
+                                
+                                btn.textContent = '❌ Exit Fullscreen';
+                                isFullscreen = true;
+                                
+                                // Resize chart to fit fullscreen
+                                if (currentChart) {
+                                    setTimeout(() => {
+                                        currentChart.resize();
+                                    }, 100);
+                                }
+                            } else {
+                                // Exit fullscreen
+                                container.classList.remove('fullscreen-chart');
+                                overlay.style.display = 'none';
+                                
+                                // Remove fullscreen controls
+                                const controls = document.getElementById('fullscreenControls');
+                                if (controls) {
+                                    controls.remove();
+                                }
+                                
+                                btn.textContent = '🔍 Fullscreen';
+                                isFullscreen = false;
+                                
+                                // Resize chart back to normal
+                                if (currentChart) {
+                                    setTimeout(() => {
+                                        currentChart.resize();
+                                    }, 100);
+                                }
+                            }
+                        }
+                    </script>
+                </div>
+                
+                <div class="card">
                     <h2>🔗 API Endpoints</h2>
                     <div class="grid">
                         <div>
@@ -1158,6 +1943,8 @@ async def get_spx_straddle_dashboard():
                                 <li><a href="/api/spx-straddle/statistics/full-report">📋 Full Analysis Report (for Gist)</a></li>
                                 <li><a href="/api/spx-straddle/export/csv?days=30">Export CSV</a></li>
                                 <li><a href="/api/spx-straddle/status">System Status</a></li>
+                                <li><a href="/api/spx-straddle/chart-data?days=730">📈 Chart Data API</a></li>
+                                <li><a href="/api/spx-straddle/chart-config/trend?days=730">⚙️ Chart Config API</a></li>
                             </ul>
                         </div>
                         <div>
