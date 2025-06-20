@@ -2196,23 +2196,301 @@ async def get_unified_dashboard():
         </html>
         """
 
-# Legacy SPX Dashboard endpoint (redirect to unified dashboard)
+# Original SPX Dashboard - restored functionality
 @app.get("/api/spx-straddle/dashboard", response_class=HTMLResponse)
-async def get_spx_straddle_dashboard_redirect():
-    """Redirect to unified dashboard for backward compatibility"""
-    return """
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <title>Redirecting...</title>
-        <meta http-equiv="refresh" content="0;url=/api/dashboard">
-    </head>
-    <body>
-        <p>Redirecting to unified dashboard...</p>
-        <p><a href="/api/dashboard">Click here if not redirected automatically</a></p>
-    </body>
-    </html>
-    """
+async def get_spx_straddle_dashboard():
+    """Original SPX straddle dashboard - kept for compatibility"""
+    try:
+        # Get current straddle data using the same method as the today endpoint
+        current_data = await calculator.get_spx_straddle_cost()
+        
+        # Ensure current_data is a dictionary
+        if isinstance(current_data, str):
+            import json
+            current_data = json.loads(current_data)
+        elif current_data is None:
+            current_data = {"calculation_status": "no_data", "message": "No data available"}
+        
+        # Get multi-timeframe statistics
+        try:
+            multi_stats_response = await get_multi_timeframe_statistics()
+            multi_stats = multi_stats_response if isinstance(multi_stats_response, dict) else {}
+        except:
+            multi_stats = {"status": "error"}
+        
+        # Check if Discord is configured
+        discord_enabled = discord_notifier.is_enabled() if discord_notifier else False
+        
+        # Build HTML response
+        html_content = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>SPX 0DTE Straddle Dashboard</title>
+            <meta charset="utf-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1">
+            <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+            <style>
+                body {{ 
+                    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; 
+                    margin: 0; 
+                    padding: 20px; 
+                    background-color: #f5f5f5;
+                }}
+                .container {{ max-width: 1400px; margin: 0 auto; }}
+                .header {{ text-align: center; margin-bottom: 30px; }}
+                .card {{ 
+                    background: white; 
+                    border-radius: 8px; 
+                    padding: 20px; 
+                    margin: 15px 0; 
+                    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+                }}
+                .status-available {{ color: #28a745; font-weight: bold; }}
+                .status-error {{ color: #dc3545; font-weight: bold; }}
+                .status-calculating {{ color: #007bff; font-weight: bold; }}
+                .status-pending {{ color: #ffc107; font-weight: bold; }}
+                .status-pending_calculation {{ color: #ffc107; font-weight: bold; }}
+                .status-no_data {{ color: #6c757d; font-weight: bold; }}
+                .btn {{ 
+                    background: #007bff; 
+                    color: white; 
+                    padding: 10px 20px; 
+                    border: none; 
+                    border-radius: 4px; 
+                    cursor: pointer; 
+                    text-decoration: none;
+                    display: inline-block;
+                    margin: 5px;
+                }}
+                .btn:hover {{ background: #0056b3; }}
+                .btn-success {{ background: #28a745; }}
+                .btn-success:hover {{ background: #1e7e34; }}
+                .metric {{ display: inline-block; margin: 10px 20px 10px 0; }}
+                .metric-value {{ font-size: 1.5em; font-weight: bold; color: #007bff; }}
+                .metric-label {{ font-size: 0.9em; color: #666; }}
+                .chart-container {{ position: relative; height: 400px; margin: 20px 0; }}
+                .chart-controls {{ margin: 20px 0; text-align: center; }}
+                .chart-controls select, .chart-controls button {{ 
+                    margin: 5px; 
+                    padding: 8px 12px; 
+                    border: 1px solid #ddd; 
+                    border-radius: 4px; 
+                }}
+                .fullscreen-btn {{ 
+                    background: #6f42c1; 
+                    color: white; 
+                    border: none; 
+                    padding: 8px 16px; 
+                    border-radius: 4px; 
+                    cursor: pointer; 
+                    margin: 5px;
+                }}
+                .fullscreen-btn:hover {{ background: #5a359a; }}
+                table {{ border-collapse: collapse; width: 100%; margin-top: 15px; }}
+                th, td {{ border: 1px solid #ddd; padding: 12px; text-align: left; }}
+                th {{ background-color: #f8f9fa; font-weight: 600; }}
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <div class="header">
+                    <h1>📊 SPX 0DTE Straddle Dashboard</h1>
+                    <p>Real-time straddle costs using Polygon.io</p>
+                    <p><a href="/api/dashboard" style="color: #007bff; text-decoration: none;">🔄 Try New Unified Dashboard (SPX + SPY)</a></p>
+                </div>
+                
+                <div class="card">
+                    <h2>🎯 SPX Current Status</h2>
+                    <p><strong>Status:</strong> <span class="status-{current_data.get('calculation_status', 'unknown')}">{current_data.get('calculation_status', 'Unknown').upper().replace('_', ' ')}</span></p>
+                    <p><strong>Last Update:</strong> {current_data.get('timestamp', 'N/A')}</p>
+                    <p><strong>Discord Notifications:</strong> {'✅ Enabled' if discord_enabled else '❌ Disabled'}</p>
+                    {f'<p><strong>Message:</strong> {current_data.get("message", "")}</p>' if current_data.get("message") else ""}
+        """
+        
+        # Add current straddle data if available
+        if current_data.get('calculation_status') == 'available':
+            html_content += f"""
+                    <div style="margin-top: 20px;">
+                        <div class="metric">
+                            <div class="metric-value">${current_data.get('straddle_cost', 0):.2f}</div>
+                            <div class="metric-label">Straddle Cost</div>
+                        </div>
+                        <div class="metric">
+                            <div class="metric-value">${current_data.get('spx_price_930am', 0):.2f}</div>
+                            <div class="metric-label">SPX @ 9:30 AM</div>
+                        </div>
+                        <div class="metric">
+                            <div class="metric-value">{current_data.get('atm_strike', 0)}</div>
+                            <div class="metric-label">ATM Strike</div>
+                        </div>
+                        <div class="metric">
+                            <div class="metric-value">${current_data.get('call_price_931am', 0):.2f}</div>
+                            <div class="metric-label">Call Price</div>
+                        </div>
+                        <div class="metric">
+                            <div class="metric-value">${current_data.get('put_price_931am', 0):.2f}</div>
+                            <div class="metric-label">Put Price</div>
+                        </div>
+                    </div>
+            """
+        
+        html_content += """
+                    <div style="margin-top: 20px;">
+                        <a href="/api/spx-straddle/calculate" class="btn">🔄 Calculate Now</a>
+                        <a href="/api/discord/test" class="btn btn-success">🧪 Test Discord</a>
+                    </div>
+                </div>
+                
+                <!-- Charts -->
+                <div class="card">
+                    <h2>📈 SPX Trend Analysis</h2>
+                    <div class="chart-controls">
+                        <select id="time-period" onchange="updateChart()">
+                            <option value="30">30 Days</option>
+                            <option value="90">3 Months</option>
+                            <option value="180">6 Months</option>
+                            <option value="365">1 Year</option>
+                            <option value="730" selected>2 Years</option>
+                        </select>
+                        <select id="chart-type" onchange="updateChart()">
+                            <option value="trend" selected>Trend Analysis</option>
+                            <option value="moving-averages">Moving Averages</option>
+                            <option value="comparison">Range Analysis</option>
+                        </select>
+                        <button class="fullscreen-btn" onclick="toggleFullscreen('chart-container')">🔍 Fullscreen</button>
+                    </div>
+                    <div id="chart-container" class="chart-container">
+                        <canvas id="straddleChart"></canvas>
+                    </div>
+                    <div id="chart-status" style="text-align: center; margin-top: 10px; padding: 10px; border-radius: 4px;"></div>
+                </div>
+        """
+        
+        # Add multi-timeframe statistics if available
+        if multi_stats.get("status") == "success":
+            html_content += """
+                <div class="card">
+                    <h2>📊 Multi-Timeframe Statistics</h2>
+                    <div style="overflow-x: auto;">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Timeframe</th>
+                                    <th>Avg Cost</th>
+                                    <th>Min Cost</th>
+                                    <th>Max Cost</th>
+                                    <th>Std Dev</th>
+                                    <th>Count</th>
+                                    <th>Trend</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+            """
+            
+            for timeframe_key, timeframe in multi_stats.get("timeframes", {}).items():
+                stats = timeframe.get("descriptive_stats", {})
+                trend = timeframe.get("trend_analysis", {})
+                html_content += f"""
+                                <tr>
+                                    <td>{timeframe.get('period_label', timeframe_key)}</td>
+                                    <td>${stats.get('mean', 0):.2f}</td>
+                                    <td>${stats.get('min', 0):.2f}</td>
+                                    <td>${stats.get('max', 0):.2f}</td>
+                                    <td>${stats.get('std_dev', 0):.2f}</td>
+                                    <td>{timeframe.get('valid_market_days', 0)}</td>
+                                    <td>{'📈' if trend.get('direction') == 'up' else '📉' if trend.get('direction') == 'down' else '➡️'}</td>
+                                </tr>
+                """
+            
+            html_content += """
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            """
+        
+        html_content += """
+            </div>
+            
+            <script>
+                let currentChart = null;
+                
+                async function updateChart() {
+                    const days = document.getElementById('time-period').value;
+                    const chartType = document.getElementById('chart-type').value;
+                    const statusDiv = document.getElementById('chart-status');
+                    
+                    // Show loading status
+                    statusDiv.style.backgroundColor = '#e3f2fd';
+                    statusDiv.style.color = '#1976d2';
+                    statusDiv.innerHTML = '⏳ Loading chart data...';
+                    
+                    try {
+                        const response = await fetch(`/api/spx-straddle/chart-config/${chartType}?days=${days}`);
+                        const result = await response.json();
+                        
+                        if (currentChart) {
+                            currentChart.destroy();
+                        }
+                        
+                        // Create new chart
+                        const ctx = document.getElementById('straddleChart').getContext('2d');
+                        currentChart = new Chart(ctx, result.config);
+                        
+                        // Show success status
+                        statusDiv.style.backgroundColor = '#d4edda';
+                        statusDiv.style.color = '#155724';
+                        statusDiv.innerHTML = `✅ Chart updated with ${result.data_points} data points (${result.date_range.start} to ${result.date_range.end})`;
+                        
+                        // Hide status after 3 seconds
+                        setTimeout(() => {
+                            statusDiv.innerHTML = '';
+                            statusDiv.style.backgroundColor = '';
+                        }, 3000);
+                        
+                    } catch (error) {
+                        console.error('Error updating chart:', error);
+                        statusDiv.style.backgroundColor = '#f8d7da';
+                        statusDiv.style.color = '#721c24';
+                        statusDiv.innerHTML = '❌ Error loading chart data';
+                    }
+                }
+                
+                function toggleFullscreen(containerId) {
+                    const container = document.getElementById(containerId);
+                    if (!document.fullscreenElement) {
+                        container.requestFullscreen().catch(err => {
+                            console.error('Error attempting to enable fullscreen:', err);
+                        });
+                    } else {
+                        document.exitFullscreen();
+                    }
+                }
+                
+                // Handle fullscreen exit with ESC key
+                document.addEventListener('fullscreenchange', function() {
+                    if (!document.fullscreenElement && currentChart) {
+                        // Resize chart when exiting fullscreen
+                        setTimeout(() => currentChart.resize(), 100);
+                    }
+                });
+                
+                // Load initial chart
+                updateChart();
+            </script>
+        </body>
+        </html>
+        """
+        
+        return HTMLResponse(content=html_content)
+        
+    except Exception as e:
+        logger.error(f"Error generating SPX dashboard: {e}")
+        return HTMLResponse(
+            content=f"<html><body><h1>Error</h1><p>Failed to load dashboard: {str(e)}</p></body></html>",
+            status_code=500
+        )
 
 # Run the application
 if __name__ == "__main__":
