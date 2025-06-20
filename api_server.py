@@ -2725,7 +2725,7 @@ async def get_spy_expected_move_dashboard():
                     <div style="margin-top: 20px; padding: 15px; background: #e7f3ff; border-radius: 4px;">
                         <h4 style="margin: 0 0 10px 0; color: #0066cc;">ORB Analysis</h4>
                         <p style="margin: 5px 0;"><strong>Opening Range (9:30-9:32):</strong> ${current_data.get('orb_low', 0):.2f} - ${current_data.get('orb_high', 0):.2f}</p>
-                        <p style="margin: 5px 0;"><strong>Range Size:</strong> ${current_data.get('orb_range', 0):.2f}</p>
+                        <p style="margin: 5px 0;"><strong>Range Size:</strong> ${(current_data.get('orb_high', 0) - current_data.get('orb_low', 0)) if (current_data.get('orb_high') and current_data.get('orb_low')) else 0:.2f}</p>
                         <p style="margin: 5px 0;"><strong>Range Efficiency:</strong> {current_data.get('range_efficiency', 0) if current_data.get('range_efficiency') != 'None' else 'N/A'}</p>
                     </div>
             """

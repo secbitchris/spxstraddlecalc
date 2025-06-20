@@ -43,6 +43,7 @@ class SPYMoveData:
     range_efficiency: Optional[float]
     orb_high: Optional[float]
     orb_low: Optional[float]
+    orb_range: Optional[float]
     timestamp: str
 
 class SPYCalculator:
@@ -142,6 +143,7 @@ class SPYCalculator:
                 range_efficiency=range_efficiency,
                 orb_high=orb_data['high'] if orb_data else None,
                 orb_low=orb_data['low'] if orb_data else None,
+                orb_range=orb_data['range'] if orb_data else None,
                 timestamp=datetime.now(pytz.timezone('US/Eastern')).isoformat()
             )
             
@@ -221,6 +223,7 @@ class SPYCalculator:
                 range_efficiency=range_efficiency,
                 orb_high=orb_data['high'] if orb_data else None,
                 orb_low=orb_data['low'] if orb_data else None,
+                orb_range=orb_data['range'] if orb_data else None,
                 timestamp=datetime.now(pytz.timezone('US/Eastern')).isoformat()
             )
             
@@ -563,6 +566,7 @@ class SPYCalculator:
                 'range_efficiency': spy_data.range_efficiency if spy_data.range_efficiency is not None else 'None',
                 'orb_high': spy_data.orb_high if spy_data.orb_high is not None else 'None',
                 'orb_low': spy_data.orb_low if spy_data.orb_low is not None else 'None',
+                'orb_range': spy_data.orb_range if spy_data.orb_range is not None else 'None',
                 'timestamp': spy_data.timestamp
             }
             
@@ -588,7 +592,7 @@ class SPYCalculator:
                 # Convert string values back to appropriate types
                 for field in ['spy_price_930am', 'call_price_932am', 'put_price_932am', 
                              'straddle_cost', 'expected_move_1sigma', 'expected_move_2sigma', 
-                             'implied_volatility', 'range_efficiency', 'orb_high', 'orb_low']:
+                             'implied_volatility', 'range_efficiency', 'orb_high', 'orb_low', 'orb_range']:
                     if field in data and data[field] and data[field] != 'None':
                         data[field] = float(data[field])
                 
