@@ -413,3 +413,6 @@ redis-cli ping
 ---
 
 **Built with ❤️ for options traders and quantitative analysts** 
+## License
+
+MIT — see [LICENSE](LICENSE).
